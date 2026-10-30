@@ -745,6 +745,7 @@ def shiftfit_logo():
 
 @app.get("/api/supabase-config")
 def supabase_config():
+    # This is a publishable key; never expose a service_role key here.
     return jsonify(
         {
             "url": "https://wixmynzdcibpwfligpfl.supabase.co",

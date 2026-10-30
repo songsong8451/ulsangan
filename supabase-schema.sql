@@ -58,6 +58,13 @@ create table if not exists public.sleep_records (
 create index if not exists inbody_records_user_date_idx
   on public.inbody_records (user_id, measured_on desc);
 
+-- No direct table privileges for unauthenticated visitors.
+revoke all privileges on table public.user_profiles from anon;
+revoke all privileges on table public.shift_times from anon;
+revoke all privileges on table public.shift_overrides from anon;
+revoke all privileges on table public.inbody_records from anon;
+revoke all privileges on table public.sleep_records from anon;
+
 grant select, insert, update, delete on public.user_profiles to authenticated;
 grant select, insert, update, delete on public.shift_times to authenticated;
 grant select, insert, update, delete on public.shift_overrides to authenticated;
