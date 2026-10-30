@@ -1,4 +1,4 @@
--- Run this once in Supabase SQL Editor.
+-- Run or rerun this in Supabase SQL Editor to create/update the app tables.
 create extension if not exists pgcrypto;
 
 create table if not exists public.user_profiles (
@@ -44,6 +44,17 @@ create table if not exists public.inbody_records (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.sleep_records (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  sleep_date date not null,
+  sleep_minutes integer not null check (sleep_minutes between 0 and 1440),
+  satisfaction_score smallint not null check (satisfaction_score between 1 and 10),
+  wake_fatigue_score smallint not null check (wake_fatigue_score between 1 and 10),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, sleep_date)
+);
+
 create index if not exists inbody_records_user_date_idx
   on public.inbody_records (user_id, measured_on desc);
 
@@ -51,11 +62,13 @@ grant select, insert, update, delete on public.user_profiles to authenticated;
 grant select, insert, update, delete on public.shift_times to authenticated;
 grant select, insert, update, delete on public.shift_overrides to authenticated;
 grant select, insert, update, delete on public.inbody_records to authenticated;
+grant select, insert, update, delete on public.sleep_records to authenticated;
 
 alter table public.user_profiles enable row level security;
 alter table public.shift_times enable row level security;
 alter table public.shift_overrides enable row level security;
 alter table public.inbody_records enable row level security;
+alter table public.sleep_records enable row level security;
 
 drop policy if exists "users manage own profile" on public.user_profiles;
 create policy "users manage own profile" on public.user_profiles
@@ -77,6 +90,12 @@ create policy "users manage own shift overrides" on public.shift_overrides
 
 drop policy if exists "users manage own inbody records" on public.inbody_records;
 create policy "users manage own inbody records" on public.inbody_records
+  for all to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
+drop policy if exists "users manage own sleep records" on public.sleep_records;
+create policy "users manage own sleep records" on public.sleep_records
   for all to authenticated
   using ((select auth.uid()) = user_id)
   with check ((select auth.uid()) = user_id);
