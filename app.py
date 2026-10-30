@@ -4,8 +4,10 @@ import math
 import os
 import re
 import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
 from functools import lru_cache
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import requests
 from dotenv import load_dotenv
@@ -18,6 +20,7 @@ logging.getLogger("werkzeug").disabled = True
 PARKS_URL = "https://api.data.go.kr/openapi/tn_pubr_public_cty_park_info_api"
 ESHARE_URL = "https://www.eshare.go.kr/eshare-openapi/rsrc/list/010500/{}"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org"
+KMA_URL = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0"
 PAGE_SIZE = 100
 MAX_PAGES = {"parks": 20, "eshare": 5}
 
@@ -356,6 +359,213 @@ def reverse_geocode(lat, lon):
         return label or "현재 위치", region_code(address)
     except (requests.RequestException, ValueError):
         return "현재 위치", None
+
+
+def kma_grid(lat, lon):
+    earth_radius = 6371.00877
+    grid_size = 5.0
+    standard_lat_1, standard_lat_2 = 30.0, 60.0
+    origin_lon, origin_lat = 126.0, 38.0
+    origin_x, origin_y = 43, 136
+    radians = math.pi / 180.0
+    earth_radius /= grid_size
+    sn = math.log(
+        math.cos(standard_lat_1 * radians) / math.cos(standard_lat_2 * radians)
+    ) / math.log(
+        math.tan(math.pi * 0.25 + standard_lat_2 * radians * 0.5)
+        / math.tan(math.pi * 0.25 + standard_lat_1 * radians * 0.5)
+    )
+    sf = math.tan(math.pi * 0.25 + standard_lat_1 * radians * 0.5) ** sn
+    sf *= math.cos(standard_lat_1 * radians) / sn
+    ro = earth_radius * sf / math.tan(math.pi * 0.25 + origin_lat * radians * 0.5) ** sn
+    ra = earth_radius * sf / math.tan(math.pi * 0.25 + lat * radians * 0.5) ** sn
+    theta = lon * radians - origin_lon * radians
+    if theta > math.pi:
+        theta -= 2.0 * math.pi
+    theta *= sn
+    nx = math.floor(ra * math.sin(theta) + origin_x + 0.5)
+    ny = math.floor(ro - ra * math.cos(theta) + origin_y + 0.5)
+    return nx, ny
+
+
+def kma_items(operation, params):
+    key = os.environ.get("DATA_GO_KR_WEATHER_SERVICE_KEY", "").strip()
+    if not key:
+        raise RuntimeError("기상청 API 인증키가 설정되지 않았습니다.")
+    query = {
+        **params,
+        "serviceKey": key,
+        "dataType": "JSON",
+        "pageNo": 1,
+    }
+    try:
+        response = requests.get(
+            f"{KMA_URL}/{operation}",
+            params=query,
+            headers={"Accept": "application/json"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError) as error:
+        raise RuntimeError("기상청 데이터 서비스에 연결하지 못했습니다.") from error
+    result = payload.get("response", {}) if isinstance(payload, dict) else {}
+    header = result.get("header", {}) if isinstance(result, dict) else {}
+    if str(header.get("resultCode", "00")) != "00":
+        raise RuntimeError("기상청에서 날씨 자료를 반환하지 않았습니다.")
+    body = result.get("body", {})
+    items = body.get("items", {}).get("item", []) if isinstance(body, dict) else []
+    return items if isinstance(items, list) else [items] if items else []
+
+
+def latest_village_base(now):
+    cutoff = now - timedelta(minutes=10)
+    candidates = []
+    for day_delta in (-1, 0):
+        date = (cutoff + timedelta(days=day_delta)).date()
+        for hour in (2, 5, 8, 11, 14, 17, 20, 23):
+            candidate = datetime(
+                date.year, date.month, date.day, hour, tzinfo=now.tzinfo
+            )
+            if candidate <= cutoff:
+                candidates.append(candidate)
+    return max(candidates)
+
+
+def kma_condition(precipitation_type, sky):
+    precip_labels = {
+        "1": "비",
+        "2": "비와 눈",
+        "3": "눈",
+        "4": "소나기",
+        "5": "빗방울",
+        "6": "빗방울과 눈날림",
+        "7": "눈날림",
+    }
+    if str(precipitation_type) in precip_labels:
+        return precip_labels[str(precipitation_type)]
+    return {"1": "맑음", "3": "구름 많음", "4": "흐림"}.get(
+        str(sky), "날씨 정보 확인 중"
+    )
+
+
+@app.route("/api/weather", methods=["GET", "POST"])
+def weather():
+    params = request.get_json(silent=True) if request.method == "POST" else request.args
+    params = params or request.args
+    address = str(params.get("address", "")).strip()[:200]
+    lat, lon = numeric(params.get("lat")), numeric(params.get("lon"))
+    if (lat is None) != (lon is None):
+        return jsonify({"error": "위치 좌표를 확인할 수 없습니다."}), 400
+    if lat is not None and lon is not None:
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            return jsonify({"error": "위치 좌표가 올바르지 않습니다."}), 400
+        location_label, _ = reverse_geocode(lat, lon)
+    elif address:
+        try:
+            lat, lon, location_label, _ = geocode_address(address)
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        except RuntimeError:
+            return jsonify(
+                {"error": "주소 검색에 실패했어요. 잠시 후 다시 시도해 주세요."}
+            ), 502
+    else:
+        return jsonify({"error": "주소를 입력하거나 현재 위치를 사용해 주세요."}), 400
+
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    nx, ny = kma_grid(lat, lon)
+    observation_time = (now - timedelta(minutes=40)).replace(
+        minute=0, second=0, microsecond=0
+    )
+    village_base = latest_village_base(now)
+    common = {"numOfRows": 1000, "nx": nx, "ny": ny}
+    try:
+        observations = kma_items(
+            "getUltraSrtNcst",
+            {
+                **common,
+                "base_date": observation_time.strftime("%Y%m%d"),
+                "base_time": observation_time.strftime("%H00"),
+            },
+        )
+        forecasts = kma_items(
+            "getVilageFcst",
+            {
+                **common,
+                "base_date": village_base.strftime("%Y%m%d"),
+                "base_time": village_base.strftime("%H00"),
+            },
+        )
+    except RuntimeError:
+        return jsonify(
+            {
+                "error": "날씨 정보를 불러오지 못했어요. 인증키 승인과 API 이용 설정을 확인해 주세요."
+            }
+        ), 502
+
+    observed = {item.get("category"): item.get("obsrValue") for item in observations}
+    forecast_by_time = {}
+    for item in forecasts:
+        category = item.get("category")
+        if category not in {"TMP", "SKY", "PTY", "POP"}:
+            continue
+        key = f"{item.get('fcstDate', '')}{item.get('fcstTime', '')}"
+        forecast_by_time.setdefault(key, {})[category] = item.get("fcstValue")
+
+    next_forecasts = []
+    for key, values in sorted(forecast_by_time.items()):
+        try:
+            date = datetime.strptime(key[:8], "%Y%m%d")
+            hour, minute = int(key[8:10]), int(key[10:12])
+            if hour == 24:
+                date += timedelta(days=1)
+                hour = 0
+            forecast_time = datetime(
+                date.year, date.month, date.day, hour, minute, tzinfo=now.tzinfo
+            )
+        except (ValueError, IndexError):
+            continue
+        if forecast_time < now:
+            continue
+        next_forecasts.append(
+            {
+                "time": forecast_time.strftime("%H:%M"),
+                "temperature": numeric(values.get("TMP")),
+                "condition": kma_condition(values.get("PTY", "0"), values.get("SKY")),
+                "rain_probability": numeric(values.get("POP")),
+            }
+        )
+        if len(next_forecasts) == 6:
+            break
+
+    if not observations and not next_forecasts:
+        return jsonify({"error": "현재 위치의 날씨 자료가 아직 없어요."}), 502
+
+    precipitation = observed.get("PTY", "0")
+    current_condition = kma_condition(precipitation, None)
+    if str(precipitation) == "0" and next_forecasts:
+        current_condition = next_forecasts[0]["condition"]
+    current = {
+        "temperature": numeric(observed.get("T1H")),
+        "humidity": numeric(observed.get("REH")),
+        "wind_speed": numeric(observed.get("WSD")),
+        "rain_amount": observed.get("RN1", "강수 정보 없음"),
+        "condition": current_condition,
+        "observed_at": observation_time.strftime("%Y-%m-%d %H:%M"),
+    }
+    if current["temperature"] is None and next_forecasts:
+        current["temperature"] = next_forecasts[0]["temperature"]
+    return jsonify(
+        {
+            "location": location_label,
+            "current": current,
+            "forecast": next_forecasts,
+            "updated_at": now.strftime("%Y-%m-%d %H:%M"),
+            "source": "기상청 단기예보 조회서비스",
+            "notice": "동네예보 격자 기준 자료예요. 실제 날씨와 차이가 있을 수 있습니다.",
+        }
+    )
 
 
 def xml_response(payload, status=200):
