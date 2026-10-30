@@ -21,6 +21,8 @@
   </style>
   <style>
     .nearby-form{display:grid;grid-template-columns:minmax(0,1fr) 120px auto auto;gap:9px;margin:14px 0 16px}.nearby-form input,.nearby-form select{width:100%;min-width:0;min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:11px;background:#0d1511;color:var(--text);font:inherit;font-size:13px}.nearby-form input::placeholder{color:var(--dim)}.nearby-form button{min-height:44px}.nearby-results{display:grid;gap:13px}.nearby-results>p{margin:0;color:var(--muted);font-size:13px}.nearby-group{display:grid;gap:8px}.nearby-group h3{margin:0;color:var(--muted);font-size:12px}.nearby-result-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:12px;border:1px solid rgba(255,255,255,.055);border-radius:12px;background:rgba(255,255,255,.02)}.nearby-result-row strong{font-size:13px}.nearby-result-row small{grid-column:1;color:var(--muted);font-size:11px}.nearby-result-row .distance{grid-column:2;grid-row:1;color:var(--mint);font-size:11px;font-weight:700}.nearby-result-row a{grid-column:1/-1;width:max-content;margin-top:3px;color:var(--blue);font-size:11px;text-decoration:none}.nearby-note{padding-top:9px;border-top:1px solid rgba(255,255,255,.06);color:var(--dim)!important;font-size:11px!important}
+    .pattern-dialog{width:min(440px,calc(100vw - 32px));padding:0;border:1px solid var(--line);border-radius:20px;background:#121b16;color:var(--text);box-shadow:0 28px 90px #0009}.pattern-dialog::backdrop{background:rgba(2,6,4,.72);backdrop-filter:blur(5px)}.pattern-dialog-inner{padding:23px}.pattern-dialog-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:7px}.pattern-dialog h2{margin:0;font-size:20px}.pattern-dialog p{margin:0 0 17px;color:var(--muted);font-size:13px}.pattern-close{width:36px;height:36px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);font-size:20px}.pattern-choice{display:flex;flex-direction:column;align-items:flex-start;width:100%;min-height:70px;margin-top:9px;padding:12px 14px;border:1px solid var(--line);border-radius:13px;background:var(--panel);text-align:left}.pattern-choice:hover,.pattern-choice[aria-pressed="true"]{border-color:rgba(184,242,121,.45);background:rgba(184,242,121,.07)}.pattern-choice strong{font-size:14px}.pattern-choice small{margin-top:3px;color:var(--muted);font-size:12px}
+    .day-cell.afternoon .shift-type,.month-day.afternoon .shift-type{background:rgba(244,200,117,.12);color:var(--amber)}.legend .afternoon-dot{background:var(--amber)}
     @media(max-width:720px){.nearby-form{grid-template-columns:1fr 106px}.nearby-form input{grid-column:1/-1}.nearby-form button{width:100%;padding-inline:8px;font-size:12px}.nearby-result-row{padding:11px}}
   </style>
 </head>
@@ -83,7 +85,7 @@
         <section class="page" id="page-calendar" data-title="교대 달력">
           <div class="page-heading"><div><p class="eyebrow">SHIFT CALENDAR</p><h1>내 근무 리듬 한눈에</h1><p>근무 패턴은 예시예요. 날짜를 눌러 일정을 살펴보세요.</p></div><button class="button secondary" id="pattern-btn">4조 2교대 <svg class="icon" style="width:16px"><use href="#i-chevron"/></svg></button></div>
           <div class="stack">
-            <article class="card"><div class="card-title"><div><h2>이번 주 흐름</h2><p id="week-caption"></p></div><div class="legend"><span><i></i>주간</span><span><i class="night-dot"></i>야간</span><span><i class="off-dot"></i>비번·휴무</span></div></div><div class="week-strip" id="week-strip"></div></article>
+            <article class="card"><div class="card-title"><div><h2>이번 주 흐름</h2><p id="week-caption"></p></div><div class="legend"><span><i></i>주간</span><span><i class="afternoon-dot"></i>오후</span><span><i class="night-dot"></i>야간</span><span><i class="off-dot"></i>비번·휴무</span></div></div><div class="week-strip" id="week-strip"></div></article>
             <article class="card"><div class="card-title"><div><h2 id="month-heading">월간 일정</h2><p id="selected-summary">날짜를 선택하면 근무 정보가 여기에 표시돼요.</p></div><div class="calendar-controls"><button class="control-arrow" id="prev-month" aria-label="이전 달">‹</button><span class="month-title" id="month-title"></span><button class="control-arrow" id="next-month" aria-label="다음 달">›</button></div></div><div class="month-grid" id="month-grid"></div></article>
             <div class="small-stat"><article class="stat"><span>이번 달 예정 근무</span><strong id="monthly-shifts">—</strong></article><article class="stat"><span>다음 휴무까지</span><strong id="days-off">—</strong></article></div>
           </div>
@@ -111,6 +113,7 @@
     </nav>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <dialog class="pattern-dialog" id="pattern-dialog" aria-labelledby="pattern-dialog-title"><div class="pattern-dialog-inner"><div class="pattern-dialog-head"><h2 id="pattern-dialog-title">근무 패턴 선택</h2><button class="pattern-close" id="close-pattern" aria-label="닫기">×</button></div><p>실제 교대 주기는 회사 일정과 다를 수 있어요.</p><button class="pattern-choice" data-pattern-choice="four"><strong>4조 2교대</strong><small>주간 → 야간 → 비번 → 휴무 예시</small></button><button class="pattern-choice" data-pattern-choice="three"><strong>3교대</strong><small>주간 → 오후 → 야간 → 비번 순환 예시</small></button></div></dialog>
   <script>
     const toast = document.getElementById('toast');
     let toastTimer;
@@ -121,18 +124,20 @@
     const now=new Date();
     document.getElementById('today-label').textContent=new Intl.DateTimeFormat('ko-KR',{year:'numeric',month:'long',day:'numeric',weekday:'short'}).format(now);
     document.getElementById('hero-date').textContent=new Intl.DateTimeFormat('ko-KR',{month:'long',day:'numeric',weekday:'long'}).format(now);
-    const shiftTypes=['주간','야간','비번','휴무'];
-    const shiftClass=['','night','off','off'];
+    const shiftPatterns={four:{label:'4조 2교대',types:['주간','야간','비번','휴무']},three:{label:'3교대',types:['주간','오후','야간','비번']}};
+    const savedPattern=localStorage.getItem('shiftfit-pattern');
+    let activePattern=shiftPatterns[savedPattern]?savedPattern:'four';
+    let shiftTypes=shiftPatterns[activePattern].types;
     const cycleOffset=Math.floor((Date.UTC(now.getFullYear(),now.getMonth(),now.getDate())-Date.UTC(2026,9,29))/86400000);
-    function shiftFor(date){return ((cycleOffset+Math.floor((Date.UTC(date.getFullYear(),date.getMonth(),date.getDate())-Date.UTC(now.getFullYear(),now.getMonth(),now.getDate()))/86400000))%4+4)%4}
-    const todayShift=shiftTypes[shiftFor(now)];
-    const shiftLabel=type=>type<2?`${shiftTypes[type]} 근무`:shiftTypes[type];
-    document.querySelector('#page-home .eyebrow').textContent=`오늘 · ${shiftLabel(shiftFor(now))}`;
-    document.querySelector('#page-home .hero .pill').innerHTML=`<i class="live-dot"></i>오늘은 ${shiftLabel(shiftFor(now))}`;
-    document.querySelector('.shift-mini strong').textContent=shiftLabel(shiftFor(now));
+    function shiftFor(date){const dayOffset=Math.floor((Date.UTC(date.getFullYear(),date.getMonth(),date.getDate())-Date.UTC(now.getFullYear(),now.getMonth(),now.getDate()))/86400000);return ((cycleOffset+dayOffset)%shiftTypes.length+shiftTypes.length)%shiftTypes.length}
+    function shiftClass(type){return shiftTypes[type]==='야간'?'night':shiftTypes[type]==='오후'?'afternoon':['비번','휴무'].includes(shiftTypes[type])?'off':''}
+    const shiftLabel=type=>['주간','오후','야간'].includes(shiftTypes[type])?`${shiftTypes[type]} 근무`:shiftTypes[type];
+    function updateCurrentShift(){document.querySelector('#page-home .eyebrow').textContent=`오늘 · ${shiftLabel(shiftFor(now))}`;document.querySelector('#page-home .hero .pill').innerHTML=`<i class="live-dot"></i>오늘은 ${shiftLabel(shiftFor(now))}`;document.querySelector('.shift-mini strong').textContent=shiftLabel(shiftFor(now));document.querySelector('#page-workout .pill').textContent=`${shiftLabel(shiftFor(now))} 일정 예시`}
+    updateCurrentShift();
     const activityStart=new Date(now);activityStart.setDate(now.getDate()-now.getDay());
     document.querySelectorAll('#page-workout .week-strip .day-cell').forEach((cell,index)=>{const date=new Date(activityStart);date.setDate(activityStart.getDate()+index);cell.querySelector('.weekday').textContent=['일','월','화','수','목','금','토'][index];cell.querySelector('.day-number').textContent=date.getDate();cell.classList.toggle('selected',date.toDateString()===now.toDateString());cell.querySelector('.shift-type').textContent=[0,2,6].includes(index)?'운동':'—';cell.querySelector('.shift-type').style.opacity=[0,2,6].includes(index)?'1':'.35'});
     let shownMonth=new Date(now.getFullYear(),now.getMonth(),1);let selectedDate=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+    document.getElementById('selected-summary').textContent=`${selectedDate.getMonth()+1}월 ${selectedDate.getDate()}일 · ${shiftLabel(shiftFor(selectedDate))}`;
     const monthGrid=document.getElementById('month-grid');
     function renderCalendar(){
       const year=shownMonth.getFullYear(),month=shownMonth.getMonth();
@@ -147,7 +152,7 @@
         else if(index>=firstDay+days){date=new Date(year,month+1,index-firstDay-days+1);outside=true}
         else date=new Date(year,month,index-firstDay+1);
         const type=shiftFor(date),button=document.createElement('button');
-        button.className=`month-day ${shiftClass[type]}${outside?' outside':''}${date.toDateString()===now.toDateString()?' today':''}${date.toDateString()===selectedDate.toDateString()?' selected':''}`;
+        button.className=`month-day ${shiftClass(type)}${outside?' outside':''}${date.toDateString()===now.toDateString()?' today':''}${date.toDateString()===selectedDate.toDateString()?' selected':''}`;
         button.innerHTML=`<span class="date-num">${date.getDate()}</span><span class="shift-type">${shiftTypes[type]}</span>`;
         button.setAttribute('aria-label',`${year}년 ${month+1}월 ${date.getDate()}일 ${shiftTypes[type]}`);
         button.addEventListener('click',()=>{selectedDate=date;document.getElementById('selected-summary').textContent=`${month+1}월 ${date.getDate()}일 · ${shiftLabel(type)}`;renderCalendar()});
@@ -155,14 +160,19 @@
       }
       const weekStart=new Date(now);weekStart.setDate(now.getDate()-now.getDay());
       const week=document.getElementById('week-strip');week.innerHTML='';
-      for(let i=0;i<7;i++){const date=new Date(weekStart);date.setDate(weekStart.getDate()+i);const type=shiftFor(date);const button=document.createElement('button');button.className=`day-cell ${shiftClass[type]}${date.toDateString()===selectedDate.toDateString()?' selected':''}`;button.innerHTML=`<span class="weekday">${['일','월','화','수','목','금','토'][i]}</span><span class="day-number">${date.getDate()}</span><span class="shift-type">${shiftTypes[type].slice(0,1)}</span>`;button.addEventListener('click',()=>{selectedDate=date;shownMonth=new Date(date.getFullYear(),date.getMonth(),1);document.getElementById('selected-summary').textContent=`${date.getMonth()+1}월 ${date.getDate()}일 · ${shiftLabel(type)}`;renderCalendar()});week.append(button)}
-      const shifts=Array.from({length:days},(_,day)=>shiftFor(new Date(year,month,day+1))).filter(type=>type<2).length;document.getElementById('monthly-shifts').innerHTML=`${shifts}<small>회</small>`;
-      let tillOff=0;while(tillOff<30&&shiftFor(new Date(now.getFullYear(),now.getMonth(),now.getDate()+tillOff))>1)tillOff++;document.getElementById('days-off').innerHTML=`${tillOff}<small>일 후</small>`;
+      for(let i=0;i<7;i++){const date=new Date(weekStart);date.setDate(weekStart.getDate()+i);const type=shiftFor(date);const button=document.createElement('button');button.className=`day-cell ${shiftClass(type)}${date.toDateString()===selectedDate.toDateString()?' selected':''}`;button.innerHTML=`<span class="weekday">${['일','월','화','수','목','금','토'][i]}</span><span class="day-number">${date.getDate()}</span><span class="shift-type">${shiftTypes[type].slice(0,1)}</span>`;button.addEventListener('click',()=>{selectedDate=date;shownMonth=new Date(date.getFullYear(),date.getMonth(),1);document.getElementById('selected-summary').textContent=`${date.getMonth()+1}월 ${date.getDate()}일 · ${shiftLabel(type)}`;renderCalendar()});week.append(button)}
+      const shifts=Array.from({length:days},(_,day)=>shiftTypes[shiftFor(new Date(year,month,day+1))]).filter(type=>['주간','오후','야간'].includes(type)).length;document.getElementById('monthly-shifts').innerHTML=`${shifts}<small>회</small>`;
+      let tillOff=0;while(tillOff<30&&!['비번','휴무'].includes(shiftTypes[shiftFor(new Date(now.getFullYear(),now.getMonth(),now.getDate()+tillOff))]))tillOff++;document.getElementById('days-off').innerHTML=`${tillOff}<small>일 후</small>`;
     }
     document.getElementById('prev-month').addEventListener('click',()=>{shownMonth=new Date(shownMonth.getFullYear(),shownMonth.getMonth()-1,1);renderCalendar()});
     document.getElementById('next-month').addEventListener('click',()=>{shownMonth=new Date(shownMonth.getFullYear(),shownMonth.getMonth()+1,1);renderCalendar()});
     renderCalendar();
-    document.getElementById('pattern-btn').addEventListener('click',()=>showToast('현재 근무 패턴은 4조 2교대 예시입니다.'));
+    const patternDialog=document.getElementById('pattern-dialog');
+    function syncPatternChoices(){document.getElementById('pattern-btn').innerHTML=`${shiftPatterns[activePattern].label} <svg class="icon" style="width:16px"><use href="#i-chevron"/></svg>`;document.querySelectorAll('[data-pattern-choice]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.patternChoice===activePattern)))}
+    syncPatternChoices();
+    document.getElementById('pattern-btn').addEventListener('click',()=>patternDialog.showModal());
+    document.getElementById('close-pattern').addEventListener('click',()=>patternDialog.close());
+    document.querySelectorAll('[data-pattern-choice]').forEach(button=>button.addEventListener('click',()=>{activePattern=button.dataset.patternChoice;shiftTypes=shiftPatterns[activePattern].types;localStorage.setItem('shiftfit-pattern',activePattern);syncPatternChoices();document.getElementById('selected-summary').textContent=`${selectedDate.getMonth()+1}월 ${selectedDate.getDate()}일 · ${shiftLabel(shiftFor(selectedDate))}`;updateCurrentShift();renderCalendar();patternDialog.close();showToast(`${shiftPatterns[activePattern].label} 예시 패턴으로 달력을 바꿨어요.`)}));
     document.querySelectorAll('.check-btn').forEach(button=>button.addEventListener('click',()=>{button.classList.toggle('done');button.closest('.routine-item').classList.toggle('completed');button.setAttribute('aria-pressed',button.classList.contains('done'))}));
     document.querySelectorAll('[data-intensity]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('[data-intensity]').forEach(item=>item.classList.toggle('active',item===button));showToast(`${button.dataset.intensity} 강도를 선택했어요.`)}));
     document.getElementById('start-session').addEventListener('click',()=>showToast('운동 세션을 시작했어요. 편안한 속도로 진행해 주세요.'));
