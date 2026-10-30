@@ -738,6 +738,11 @@ def preview_bridge():
     return send_from_directory(app.root_path, "__preview-bridge.js")
 
 
+@app.get("/shiftfit-logo.png")
+def shiftfit_logo():
+    return send_from_directory(app.root_path, "shiftfit-logo.png", mimetype="image/png")
+
+
 @app.get("/api/supabase-config")
 def supabase_config():
     return jsonify(
