@@ -277,7 +277,8 @@
     const nearbyAddressInput=document.getElementById('nearby-address');
     const weatherAddressInput=document.getElementById('weather-address');
     function savePersonalProfile(){localStorage.setItem('shiftfit-user-profile',JSON.stringify(personalProfile));queueCloudSync()}
-    function updateProfileIdentity(){const name=personalProfile.name?.trim()||'민우';document.getElementById('profile-name-display').textContent=`${name}님`;document.getElementById('profile-avatar').textContent=Array.from(name)[0];document.getElementById('profile-open-mobile').textContent=Array.from(name)[0]}
+    function kakaoNickname(user){const metadata=user?.user_metadata||{},identity=user?.identities?.find(item=>item.provider==='kakao')?.identity_data||{};const value=metadata.nickname||identity.nickname||metadata.preferred_username||identity.preferred_username||metadata.name||identity.name||metadata.full_name||identity.full_name;return typeof value==='string'?value.trim():''}
+    function updateProfileIdentity(){const name=kakaoNickname(authUser)||personalProfile.name?.trim()||'민우';document.getElementById('profile-name-display').textContent=`${name}님`;document.getElementById('profile-avatar').textContent=Array.from(name)[0];document.getElementById('profile-open-mobile').textContent=Array.from(name)[0]}
     profileNameInput.value=personalProfile.name||'민우';
     profileAddressInput.value=personalProfile.address||'';
     nearbyAddressInput.value=personalProfile.address||'';
@@ -488,7 +489,7 @@
     });
     let lastCloudSyncSucceeded=true;
     function setAuthMessage(message){document.getElementById('auth-note').textContent=message}
-    function setAuthUi(user){authUser=user;document.getElementById('auth-state').textContent=user?'카카오 계정 연결됨':'로그인 전';document.getElementById('kakao-login').hidden=!!user;document.getElementById('account-logout').hidden=!user;document.getElementById('sync-retry').hidden=!user;setAuthMessage(user?'계정 기록을 Supabase와 동기화합니다.':'로그인하면 이 기록을 내 계정에 동기화할 수 있어요.')}
+    function setAuthUi(user){authUser=user;document.getElementById('auth-state').textContent=user?'카카오 계정 연결됨':'로그인 전';document.getElementById('kakao-login').hidden=!!user;document.getElementById('account-logout').hidden=!user;document.getElementById('sync-retry').hidden=!user;updateProfileIdentity();setAuthMessage(user?'계정 기록을 Supabase와 동기화합니다.':'로그인하면 이 기록을 내 계정에 동기화할 수 있어요.')}
     function localDataKeys(){return ['shiftfit-user-profile','shiftfit-inbody-records','shiftfit-sleep-records','shiftfit-pattern','shiftfit-custom-cycle','shiftfit-calendar-overrides']}
     function clearLocalAccountData(keepOwner=false){localDataKeys().forEach(key=>localStorage.removeItem(key));if(!keepOwner)localStorage.removeItem('shiftfit-cloud-owner')}
     function getProfileRow(){return {user_id:authUser.id,nickname:personalProfile.name?.trim()||'민우',home_address:personalProfile.address||null,avg_sleep_minutes:Number(personalProfile.sleep.hours)*60+Number(personalProfile.sleep.minutes),shift_pattern_key:activePattern,shift_sequence:shiftTypes,cycle_start_date:cycleStartDate}}
