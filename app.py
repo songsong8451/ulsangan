@@ -389,6 +389,16 @@ def preview_bridge():
     return send_from_directory(app.root_path, "__preview-bridge.js")
 
 
+@app.get("/api/supabase-config")
+def supabase_config():
+    return jsonify(
+        {
+            "url": "https://wixmynzdcibpwfligpfl.supabase.co",
+            "publishableKey": os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip(),
+        }
+    )
+
+
 @app.route("/api/nearby", methods=["GET", "POST"])
 def nearby():
     params = request.get_json(silent=True) if request.method == "POST" else request.args
