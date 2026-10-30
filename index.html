@@ -19,6 +19,10 @@
     @media(max-width:390px){.week-strip{gap:3px}.day-cell{min-height:66px}.day-cell .shift-type{min-width:21px;padding:2px 4px}.calendar-controls{gap:5px}.month-title{min-width:0}.month-day{min-height:51px}.routine-item{gap:9px;padding:12px}.exercise-meta{display:none}.sleep-stat span{font-size:10px}}
     @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
   </style>
+  <style>
+    .nearby-form{display:grid;grid-template-columns:minmax(0,1fr) 120px auto auto;gap:9px;margin:14px 0 16px}.nearby-form input,.nearby-form select{width:100%;min-width:0;min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:11px;background:#0d1511;color:var(--text);font:inherit;font-size:13px}.nearby-form input::placeholder{color:var(--dim)}.nearby-form button{min-height:44px}.nearby-results{display:grid;gap:13px}.nearby-results>p{margin:0;color:var(--muted);font-size:13px}.nearby-group{display:grid;gap:8px}.nearby-group h3{margin:0;color:var(--muted);font-size:12px}.nearby-result-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:12px;border:1px solid rgba(255,255,255,.055);border-radius:12px;background:rgba(255,255,255,.02)}.nearby-result-row strong{font-size:13px}.nearby-result-row small{grid-column:1;color:var(--muted);font-size:11px}.nearby-result-row .distance{grid-column:2;grid-row:1;color:var(--mint);font-size:11px;font-weight:700}.nearby-result-row a{grid-column:1/-1;width:max-content;margin-top:3px;color:var(--blue);font-size:11px;text-decoration:none}.nearby-note{padding-top:9px;border-top:1px solid rgba(255,255,255,.06);color:var(--dim)!important;font-size:11px!important}
+    @media(max-width:720px){.nearby-form{grid-template-columns:1fr 106px}.nearby-form input{grid-column:1/-1}.nearby-form button{width:100%;padding-inline:8px;font-size:12px}.nearby-result-row{padding:11px}}
+  </style>
 </head>
 <body>
   <svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
@@ -65,6 +69,7 @@
           <div class="grid dashboard-grid">
             <div class="stack">
               <article class="card hero"><div class="hero-top"><span class="pill"><i class="live-dot"></i>오늘은 야간 근무</span><span class="hero-date" id="hero-date"></span></div><h2>근무 전, 나에게 맞는<br><em>가벼운 준비 시간</em></h2><p class="hero-copy">무리한 목표보다 지금 몸 상태에 맞춘 작은 루틴부터 시작해 보세요.</p><div class="hero-bottom"><button class="button" data-go="workout"><svg class="icon"><use href="#i-play"/></svg>15분 루틴 확인</button><span class="hero-note">원하는 날에 건너뛰어도 괜찮아요</span></div></article>
+              <article class="card" id="nearby-card"><div class="card-title"><div><h2>주변에서 가볍게 움직여요</h2><p>가까운 공원과 공공 체육시설을 거리순으로 찾아요</p></div><svg class="icon" style="color:var(--mint)"><use href="#i-dumbbell"/></svg></div><form class="nearby-form" id="nearby-form"><input id="nearby-address" name="address" autocomplete="street-address" placeholder="주소 입력 (예: 서울 중구 세종대로)" aria-label="검색할 주소"><select id="nearby-radius" aria-label="검색 반경"><option value="1">반경 1km</option><option value="3" selected>반경 3km</option><option value="5">반경 5km</option><option value="10">반경 10km</option></select><button class="button" type="submit">주소로 찾기</button><button class="button secondary" type="button" id="nearby-gps">현재 위치</button></form><div class="nearby-results" id="nearby-results" aria-live="polite"><p>위치는 주변 검색에만 사용하고 앱에 저장하지 않아요. 주소를 입력하거나 현재 위치를 허용해 주세요.</p></div></article>
               <article class="card"><div class="card-title"><div><h2>오늘의 추천 흐름</h2><p>야간 근무 전후 일정을 간단히 확인하세요</p></div><button class="text-link" data-go="calendar">달력 보기 →</button></div><div class="schedule-row"><span class="schedule-time">14:00</span><div><strong>휴식과 수분 보충</strong><small>기상 후 천천히 하루를 시작해요</small></div><span class="status done">완료</span></div><div class="schedule-row"><span class="schedule-time">16:30</span><div><strong>가벼운 스트레칭</strong><small>몸이 괜찮다면 15분 정도 움직여요</small></div><span class="status">예정</span></div><div class="schedule-row"><span class="schedule-time">19:00</span><div><strong>야간 근무 시작</strong><small>물과 간단한 식사를 챙겨두세요</small></div><span class="status">예정</span></div></article>
               <button class="workout-promo" data-go="sleep" style="text-align:left;color:inherit"><span class="promo-icon"><svg class="icon"><use href="#i-moon"/></svg></span><span class="promo-copy"><strong>퇴근 후 수면 준비도 미리 해둘까요?</strong><small>수면 환경과 알림 설정을 확인할 수 있어요.</small></span><svg class="icon promo-arrow"><use href="#i-arrow"/></svg></button>
             </div>
@@ -171,6 +176,25 @@
     document.getElementById('invite-btn').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(location.href);showToast('초대 링크를 복사했어요.')}catch{showToast('초대 링크 기능은 데모에서 사용할 수 없어요.')}});
     document.getElementById('points-btn').addEventListener('click',()=>showToast('포인트는 예시 데이터이며 실제 교환되지 않습니다.'));
     document.getElementById('notify-btn').addEventListener('click',()=>showToast('새로운 알림이 없습니다.'));
+    const nearbyForm=document.getElementById('nearby-form'),nearbyResults=document.getElementById('nearby-results');
+    async function searchNearby(params){
+      nearbyResults.replaceChildren();const loading=document.createElement('p');loading.textContent='주변 공원과 체육시설을 찾고 있어요…';nearbyResults.append(loading);
+      const searchData=Object.fromEntries(params);searchData.radius=document.getElementById('nearby-radius').value;
+      try{
+        const response=await fetch('/api/nearby',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(searchData)});const data=await response.json();
+        if(!response.ok)throw new Error(data.error||'주변 정보를 불러오지 못했어요.');
+        nearbyResults.replaceChildren();
+        const intro=document.createElement('p');intro.textContent=`${data.origin.label} 기준 반경 ${data.radius_km}km 검색 결과`;nearbyResults.append(intro);
+        for(const [key,title] of [['parks','공원 · 가벼운 조깅'],['facilities','공공 체육시설 · 운동 공간']]){
+          const group=document.createElement('section');group.className='nearby-group';const heading=document.createElement('h3');heading.textContent=`${title} (${data[key].length})`;group.append(heading);
+          if(data[key].length){data[key].slice(0,5).forEach(item=>{const row=document.createElement('article');row.className='nearby-result-row';const name=document.createElement('strong');name.textContent=item.name;const distance=document.createElement('span');distance.className='distance';distance.textContent=`${item.distance_km}km`;const address=document.createElement('small');address.textContent=item.detail?`${item.address} · ${item.detail}`:item.address;row.append(name,distance,address);if(item.url){const link=document.createElement('a');link.href=item.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='시설 안내 보기';row.append(link)}group.append(row)})}else{const empty=document.createElement('p');empty.textContent=data.sources[key]?.ok?'검색 반경 안에 등록된 장소가 없어요.':data.sources[key]?.message||'이 데이터 제공처에서 정보를 불러오지 못했어요.';group.append(empty)}nearbyResults.append(group);
+        }
+        data.recommendations.forEach(item=>{const tip=document.createElement('p');tip.textContent=`${item.title}: ${item.text}`;nearbyResults.append(tip)});
+        const note=document.createElement('p');note.className='nearby-note';note.textContent=data.notice;nearbyResults.append(note);
+      }catch(error){nearbyResults.replaceChildren();const message=document.createElement('p');message.textContent=error.message;nearbyResults.append(message)}
+    }
+    nearbyForm.addEventListener('submit',event=>{event.preventDefault();const address=document.getElementById('nearby-address').value.trim();if(!address){showToast('주소를 입력해 주세요.');return}searchNearby(new URLSearchParams({address}))});
+    document.getElementById('nearby-gps').addEventListener('click',()=>{if(!navigator.geolocation){showToast('이 브라우저에서는 위치 기능을 사용할 수 없어요.');return}navigator.geolocation.getCurrentPosition(position=>searchNearby(new URLSearchParams({lat:position.coords.latitude,lon:position.coords.longitude})),()=>showToast('위치 권한을 확인하거나 주소를 입력해 주세요.'),{enableHighAccuracy:false,timeout:10000,maximumAge:300000})});
   </script>
 </body>
 </html>
