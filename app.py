@@ -21,6 +21,7 @@ PARKS_URL = "https://api.data.go.kr/openapi/tn_pubr_public_cty_park_info_api"
 ESHARE_URL = "https://www.eshare.go.kr/eshare-openapi/rsrc/list/010500/{}"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org"
 KMA_URL = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0"
+AIR_KOREA_URL = "https://apis.data.go.kr/B552584/ArpltnInforInqireSvc"
 PAGE_SIZE = 100
 MAX_PAGES = {"parks": 20, "eshare": 5}
 
@@ -348,14 +349,15 @@ def reverse_geocode(lat, lon):
         response.raise_for_status()
         result = response.json()
         address = result.get("address", {})
-        label = ", ".join(
-            value
-            for value in (
-                address.get("city") or address.get("county") or address.get("town"),
-                address.get("state"),
-            )
-            if value
+        label_parts = (
+            address.get("borough")
+            or address.get("city_district")
+            or address.get("suburb")
+            or address.get("county"),
+            address.get("city") or address.get("town") or address.get("village"),
+            address.get("state"),
         )
+        label = ", ".join(dict.fromkeys(value for value in label_parts if value))
         return label or "현재 위치", region_code(address)
     except (requests.RequestException, ValueError):
         return "현재 위치", None
@@ -447,6 +449,135 @@ def kma_condition(precipitation_type, sky):
     return {"1": "맑음", "3": "구름 많음", "4": "흐림"}.get(
         str(sky), "날씨 정보 확인 중"
     )
+
+
+def air_sido_name(location):
+    options = (
+        ("서울", "서울"),
+        ("부산", "부산"),
+        ("대구", "대구"),
+        ("인천", "인천"),
+        ("광주", "광주"),
+        ("대전", "대전"),
+        ("울산", "울산"),
+        ("세종", "세종"),
+        ("경기", "경기"),
+        ("강원", "강원"),
+        ("충청북", "충북"),
+        ("충북", "충북"),
+        ("충청남", "충남"),
+        ("충남", "충남"),
+        ("전라북", "전북"),
+        ("전북", "전북"),
+        ("전라남", "전남"),
+        ("전남", "전남"),
+        ("경상북", "경북"),
+        ("경북", "경북"),
+        ("경상남", "경남"),
+        ("경남", "경남"),
+        ("제주", "제주"),
+    )
+    for token, sido in options:
+        if token in location:
+            return sido
+    return "전국"
+
+
+def air_quality_for_location(location):
+    key = os.environ.get("DATA_GO_KR_AIR_SERVICE_KEY", "").strip()
+    if not key:
+        raise RuntimeError("에어코리아 API 인증키가 설정되지 않았습니다.")
+    params = {
+        "serviceKey": key,
+        "returnType": "json",
+        "numOfRows": 100,
+        "pageNo": 1,
+        "sidoName": air_sido_name(location),
+        "ver": "1.0",
+    }
+    try:
+        response = requests.get(
+            f"{AIR_KOREA_URL}/getCtprvnRltmMesureDnsty",
+            params=params,
+            headers={"Accept": "application/json"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError) as error:
+        raise RuntimeError("에어코리아 대기질 자료에 연결하지 못했습니다.") from error
+    result = payload.get("response", {}) if isinstance(payload, dict) else {}
+    header = result.get("header", {}) if isinstance(result, dict) else {}
+    if str(header.get("resultCode", "00")) != "00":
+        raise RuntimeError("에어코리아에서 측정 자료를 반환하지 않았습니다.")
+    body = result.get("body", {})
+    collection = body.get("items", {}) if isinstance(body, dict) else {}
+    items = collection.get("item", []) if isinstance(collection, dict) else collection
+    if isinstance(items, dict):
+        items = [items]
+    if not items:
+        raise RuntimeError("현재 지역에 대기질 측정 자료가 없습니다.")
+
+    location_terms = [
+        term.strip() for term in location.split(",") if len(term.strip()) >= 2
+    ]
+
+    def match_score(item):
+        station = str(item.get("stationName", ""))
+        if not station:
+            return 0
+        return max(
+            (
+                len(station)
+                for term in location_terms
+                if station in term or term in station
+            ),
+            default=0,
+        )
+
+    item = max(items, key=match_score)
+
+    def grade_from(code, value, ranges):
+        if str(code) in {"1", "2", "3", "4"}:
+            return {"1": "좋음", "2": "보통", "3": "나쁨", "4": "매우 나쁨"}[str(code)]
+        reading = numeric(value)
+        if reading is None:
+            return "자료 없음"
+        return (
+            next(label for limit, label in ranges if reading <= limit)
+            if reading <= ranges[-1][0]
+            else "매우 나쁨"
+        )
+
+    return {
+        "station_name": item.get("stationName", "측정소 정보 없음"),
+        "sido": air_sido_name(location),
+        "data_time": item.get("dataTime", ""),
+        "pm10": {
+            "value": item.get("pm10Value", "-"),
+            "grade": grade_from(
+                item.get("pm10Grade1h", item.get("pm10Grade")),
+                item.get("pm10Value"),
+                ((30, "좋음"), (80, "보통"), (150, "나쁨")),
+            ),
+        },
+        "pm25": {
+            "value": item.get("pm25Value", "-"),
+            "grade": grade_from(
+                item.get("pm25Grade1h", item.get("pm25Grade")),
+                item.get("pm25Value"),
+                ((15, "좋음"), (35, "보통"), (75, "나쁨")),
+            ),
+        },
+        "overall": {
+            "value": item.get("khaiValue", "-"),
+            "grade": grade_from(
+                item.get("khaiGrade"),
+                item.get("khaiValue"),
+                ((50, "좋음"), (100, "보통"), (250, "나쁨")),
+            ),
+        },
+    }
 
 
 @app.route("/api/weather", methods=["GET", "POST"])
@@ -556,11 +687,19 @@ def weather():
     }
     if current["temperature"] is None and next_forecasts:
         current["temperature"] = next_forecasts[0]["temperature"]
+    try:
+        air_quality = {"ok": True, **air_quality_for_location(location_label)}
+    except RuntimeError:
+        air_quality = {
+            "ok": False,
+            "message": "대기질 자료를 불러오지 못했어요. 인증키 승인 상태나 측정소 자료를 확인해 주세요.",
+        }
     return jsonify(
         {
             "location": location_label,
             "current": current,
             "forecast": next_forecasts,
+            "air_quality": air_quality,
             "updated_at": now.strftime("%Y-%m-%d %H:%M"),
             "source": "기상청 단기예보 조회서비스",
             "notice": "동네예보 격자 기준 자료예요. 실제 날씨와 차이가 있을 수 있습니다.",
