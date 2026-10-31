@@ -4,6 +4,7 @@ create extension if not exists pgcrypto;
 create table if not exists public.user_profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   nickname text not null default '',
+  nickname_is_custom boolean not null default false,
   home_address text,
   avg_sleep_minutes integer check (avg_sleep_minutes between 0 and 1440),
   shift_pattern_key text not null default 'four'
@@ -15,6 +16,9 @@ create table if not exists public.user_profiles (
   check (cardinality(shift_sequence) between 2 and 14),
   check (shift_sequence <@ array['주간', '오후', '야간', '비번', '휴무']::text[])
 );
+
+alter table public.user_profiles
+  add column if not exists nickname_is_custom boolean not null default false;
 
 create table if not exists public.shift_times (
   user_id uuid not null references auth.users(id) on delete cascade,
