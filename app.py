@@ -3,9 +3,13 @@ import logging
 import math
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from datetime import datetime, timedelta
 from functools import lru_cache
+from threading import Lock
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -24,6 +28,9 @@ KMA_URL = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0"
 AIR_KOREA_URL = "https://apis.data.go.kr/B552584/ArpltnInforInqireSvc"
 PAGE_SIZE = 100
 MAX_PAGES = {"parks": 20, "eshare": 5}
+WEATHER_CACHE_TTL_SECONDS = 300
+WEATHER_CACHE = {}
+WEATHER_CACHE_LOCK = Lock()
 
 NAME_KEYS = {
     "name",
@@ -92,6 +99,25 @@ PROVINCE_CODES = {
 
 def normalized_key(value):
     return re.sub(r"[^0-9a-z가-힣]", "", str(value).lower())
+
+
+def get_weather_cache(cache_key, max_age=None):
+    with WEATHER_CACHE_LOCK:
+        cached = WEATHER_CACHE.get(cache_key)
+        if not cached:
+            return None
+        age = time.monotonic() - cached["saved_at"]
+        if max_age is not None and age > max_age:
+            return None
+        return deepcopy(cached["payload"]), age
+
+
+def set_weather_cache(cache_key, payload):
+    with WEATHER_CACHE_LOCK:
+        WEATHER_CACHE[cache_key] = {
+            "saved_at": time.monotonic(),
+            "payload": deepcopy(payload),
+        }
 
 
 def xml_to_value(element):
@@ -220,37 +246,28 @@ def request_params(response_format, page):
 
 @lru_cache(maxsize=20)
 def load_provider_records(provider, response_format, province):
-    session = requests.Session()
-    records = []
-    total = None
-    for page in range(1, MAX_PAGES[provider] + 1):
-        params = request_params(response_format, page)
-        if provider == "parks":
-            key = os.environ.get("DATA_GO_KR_SERVICE_KEY", "").strip()
-            if not key:
-                raise RuntimeError("공원 API 인증키가 서버에 설정되지 않았습니다.")
-            params["serviceKey"] = key
-            url = PARKS_URL
-            headers = {
-                "Accept": "application/json"
-                if response_format == "json"
-                else "application/xml"
-            }
-        else:
-            key = os.environ.get("ESHARE_API_KEY", "").strip()
-            if not key:
-                raise RuntimeError("공유누리 API 인증키가 서버에 설정되지 않았습니다.")
-            url = ESHARE_URL.format(quote(key, safe=""))
+    if provider == "parks":
+        key = os.environ.get("DATA_GO_KR_SERVICE_KEY", "").strip()
+        if not key:
+            raise RuntimeError("공원 API 인증키가 서버에 설정되지 않았습니다.")
+        url = PARKS_URL
+        base_params = {"serviceKey": key}
+    else:
+        key = os.environ.get("ESHARE_API_KEY", "").strip()
+        if not key:
+            raise RuntimeError("공유누리 API 인증키가 서버에 설정되지 않았습니다.")
+        url = ESHARE_URL.format(quote(key, safe=""))
+        base_params = {"ctpvCd": province} if province else {}
+    headers = {
+        "Accept": "application/json" if response_format == "json" else "application/xml"
+    }
+
+    def fetch_page(page):
+        params = {**request_params(response_format, page), **base_params}
+        if provider == "eshare":
             params.pop("type", None)
-            if province:
-                params["ctpvCd"] = province
-            headers = {
-                "Accept": "application/json"
-                if response_format == "json"
-                else "application/xml"
-            }
         try:
-            response = session.get(url, params=params, headers=headers, timeout=18)
+            response = requests.get(url, params=params, headers=headers, timeout=4)
             response.raise_for_status()
             payload = parse_payload(response, response_format)
         except (requests.RequestException, ET.ParseError, ValueError) as error:
@@ -269,12 +286,28 @@ def load_provider_records(provider, response_format, province):
             "NORMAL SERVICE.",
         }:
             raise RuntimeError("외부 데이터 서비스가 요청을 승인하지 않았습니다.")
-        page_records = list(find_records(payload))
-        records.extend(page_records)
-        if total is None:
-            total = find_total(payload)
-        if not page_records or (total is not None and page * PAGE_SIZE >= total):
-            break
+        return payload
+
+    try:
+        first_page = fetch_page(1)
+    except RuntimeError:
+        raise
+    records = list(find_records(first_page))
+    total = find_total(first_page)
+    page_count = min(
+        MAX_PAGES[provider],
+        max(1, math.ceil(total / PAGE_SIZE)) if total else MAX_PAGES[provider],
+    )
+    if page_count > 1:
+        with ThreadPoolExecutor(max_workers=min(20, page_count - 1)) as executor:
+            futures = [
+                executor.submit(fetch_page, page) for page in range(2, page_count + 1)
+            ]
+            for future in as_completed(futures):
+                try:
+                    records.extend(find_records(future.result()))
+                except RuntimeError:
+                    continue
     normalized = []
     seen = set()
     source_name = "공원 정보" if provider == "parks" else "공유누리 체육시설"
@@ -313,7 +346,7 @@ def geocode_address(address):
                 "countrycodes": "kr",
             },
             headers={"User-Agent": "ShiftFitNearby/1.0 (public exercise finder)"},
-            timeout=12,
+            timeout=4,
         )
         response.raise_for_status()
         results = response.json()
@@ -344,7 +377,7 @@ def reverse_geocode(lat, lon):
                 "addressdetails": 1,
             },
             headers={"User-Agent": "ShiftFitNearby/1.0 (public exercise finder)"},
-            timeout=10,
+            timeout=4,
         )
         response.raise_for_status()
         result = response.json()
@@ -405,7 +438,7 @@ def kma_items(operation, params):
             f"{KMA_URL}/{operation}",
             params=query,
             headers={"Accept": "application/json"},
-            timeout=15,
+            timeout=4,
         )
         response.raise_for_status()
         payload = response.json()
@@ -500,7 +533,7 @@ def air_quality_for_location(location):
             f"{AIR_KOREA_URL}/getCtprvnRltmMesureDnsty",
             params=params,
             headers={"Accept": "application/json"},
-            timeout=15,
+            timeout=4,
         )
         response.raise_for_status()
         payload = response.json()
@@ -611,29 +644,85 @@ def weather():
     )
     village_base = latest_village_base(now)
     common = {"numOfRows": 1000, "nx": nx, "ny": ny}
+    cache_key = (nx, ny, location_label)
+    fresh_cache = get_weather_cache(cache_key, WEATHER_CACHE_TTL_SECONDS)
+    if fresh_cache:
+        payload, _ = fresh_cache
+        payload["cache_status"] = "fresh-cache"
+        return jsonify(payload)
+    previous_cache = get_weather_cache(cache_key)
+
+    def use_previous_weather():
+        if not previous_cache:
+            return None
+        payload, age = previous_cache
+        payload["stale"] = True
+        payload["cache_status"] = "stale-cache"
+        payload["cache_age_seconds"] = round(age)
+        payload["notice"] = (
+            "현재 기상청 서버 응답이 지연되어 최근 조회값을 표시하고 있어요. 실외 활동 전에는 다시 확인해 주세요."
+        )
+        return jsonify(payload)
+
+    forecast_failed = False
     try:
-        observations = kma_items(
-            "getUltraSrtNcst",
-            {
-                **common,
-                "base_date": observation_time.strftime("%Y%m%d"),
-                "base_time": observation_time.strftime("%H00"),
-            },
-        )
-        forecasts = kma_items(
-            "getVilageFcst",
-            {
-                **common,
-                "base_date": village_base.strftime("%Y%m%d"),
-                "base_time": village_base.strftime("%H00"),
-            },
-        )
-    except RuntimeError:
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            observation_future = executor.submit(
+                kma_items,
+                "getUltraSrtNcst",
+                {
+                    **common,
+                    "base_date": observation_time.strftime("%Y%m%d"),
+                    "base_time": observation_time.strftime("%H00"),
+                },
+            )
+            forecast_future = executor.submit(
+                kma_items,
+                "getVilageFcst",
+                {
+                    **common,
+                    "base_date": village_base.strftime("%Y%m%d"),
+                    "base_time": village_base.strftime("%H00"),
+                },
+            )
+            air_future = executor.submit(air_quality_for_location, location_label)
+            try:
+                observations = observation_future.result()
+            except RuntimeError:
+                previous = use_previous_weather()
+                if previous:
+                    return previous
+                return jsonify(
+                    {
+                        "error": "현재 기상청 서버 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요."
+                    }
+                ), 503
+            try:
+                forecasts = forecast_future.result()
+            except RuntimeError:
+                forecasts = []
+                forecast_failed = True
+            try:
+                live_air = air_future.result()
+                air_quality = {"ok": True, **live_air}
+            except RuntimeError:
+                previous_air = (
+                    previous_cache[0].get("air_quality") if previous_cache else None
+                )
+                if previous_air and previous_air.get("ok"):
+                    air_quality = {**previous_air, "stale": True}
+                else:
+                    air_quality = {
+                        "ok": False,
+                        "message": "현재 대기질 서버 응답이 지연되고 있어요. 잠시 후 다시 확인해 주세요.",
+                    }
+    except Exception:
+        previous = use_previous_weather()
+        if previous:
+            return previous
         return jsonify(
-            {
-                "error": "날씨 정보를 불러오지 못했어요. 인증키 승인과 API 이용 설정을 확인해 주세요."
-            }
-        ), 502
+            {"error": "현재 기상 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."}
+        ), 503
 
     observed = {item.get("category"): item.get("obsrValue") for item in observations}
     forecast_by_time = {}
@@ -671,7 +760,14 @@ def weather():
             break
 
     if not observations and not next_forecasts:
-        return jsonify({"error": "현재 위치의 날씨 자료가 아직 없어요."}), 502
+        previous = use_previous_weather()
+        if previous:
+            return previous
+        return jsonify(
+            {
+                "error": "현재 기상청 서버에서 자료를 받지 못했어요. 잠시 후 다시 시도해 주세요."
+            }
+        ), 503
 
     precipitation = observed.get("PTY", "0")
     current_condition = kma_condition(precipitation, None)
@@ -687,24 +783,20 @@ def weather():
     }
     if current["temperature"] is None and next_forecasts:
         current["temperature"] = next_forecasts[0]["temperature"]
-    try:
-        air_quality = {"ok": True, **air_quality_for_location(location_label)}
-    except RuntimeError:
-        air_quality = {
-            "ok": False,
-            "message": "대기질 자료를 불러오지 못했어요. 인증키 승인 상태나 측정소 자료를 확인해 주세요.",
-        }
-    return jsonify(
-        {
-            "location": location_label,
-            "current": current,
-            "forecast": next_forecasts,
-            "air_quality": air_quality,
-            "updated_at": now.strftime("%Y-%m-%d %H:%M"),
-            "source": "기상청 단기예보 조회서비스",
-            "notice": "동네예보 격자 기준 자료예요. 실제 날씨와 차이가 있을 수 있습니다.",
-        }
-    )
+    payload = {
+        "location": location_label,
+        "current": current,
+        "forecast": next_forecasts,
+        "air_quality": air_quality,
+        "updated_at": now.strftime("%Y-%m-%d %H:%M"),
+        "source": "기상청 단기예보 조회서비스",
+        "notice": "동네예보 격자 기준 자료예요. 실제 날씨와 차이가 있을 수 있습니다."
+        if not forecast_failed
+        else "단기예보 응답이 지연되어 실황만 표시합니다. 실외 활동 전에는 예보를 다시 확인해 주세요.",
+        "cache_status": "live",
+    }
+    set_weather_cache(cache_key, payload)
+    return jsonify(payload)
 
 
 def xml_response(payload, status=200):
@@ -788,32 +880,44 @@ def nearby():
 
     sources = {}
     nearby_results = {"parks": [], "facilities": []}
-    for provider, result_key in (("parks", "parks"), ("eshare", "facilities")):
-        try:
-            records, total = load_provider_records(provider, response_format, province)
-            for item in records:
-                distance = distance_km(lat, lon, item["lat"], item["lon"])
-                if distance <= radius:
-                    item["distance_km"] = round(distance, 2)
-                    nearby_results[result_key].append(item)
-            nearby_results[result_key].sort(key=lambda item: item["distance_km"])
-            sources[result_key] = {
-                "ok": True,
-                "total": total,
-                "matched": len(nearby_results[result_key]),
-            }
-        except RuntimeError:
-            sources[result_key] = {
-                "ok": False,
-                "message": "데이터를 불러오지 못했습니다. 인증키 승인 여부와 서비스 상태를 확인해 주세요.",
-            }
+    providers = (("parks", "parks"), ("eshare", "facilities"))
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {
+            executor.submit(
+                load_provider_records,
+                provider,
+                response_format,
+                province if provider == "eshare" else None,
+            ): (provider, result_key)
+            for provider, result_key in providers
+        }
+        for future in as_completed(futures):
+            provider, result_key = futures[future]
+            try:
+                records, total = future.result()
+                for item in records:
+                    distance = distance_km(lat, lon, item["lat"], item["lon"])
+                    if distance <= radius:
+                        item["distance_km"] = round(distance, 2)
+                        nearby_results[result_key].append(item)
+                nearby_results[result_key].sort(key=lambda item: item["distance_km"])
+                sources[result_key] = {
+                    "ok": True,
+                    "total": total,
+                    "matched": len(nearby_results[result_key]),
+                }
+            except Exception:
+                sources[result_key] = {
+                    "ok": False,
+                    "message": "외부 자료 응답이 지연되거나 오류가 있어요. 잠시 후 다시 시도해 주세요.",
+                }
 
     if not any(source["ok"] for source in sources.values()):
         payload = {"error": "주변 정보를 불러오지 못했습니다.", "sources": sources}
         return (
-            xml_response(payload, 502)
+            xml_response(payload, 503)
             if response_format == "xml"
-            else (jsonify(payload), 502)
+            else (jsonify(payload), 503)
         )
 
     recommendations = []
