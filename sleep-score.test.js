@@ -82,4 +82,25 @@ assert.equal(S.nsfScore(1, S.NSF.awakenings), 100);
 
 // 8. 기록 부족 → 점수 없음
 assert.equal(S.scoreSleep({ date: '2026-10-30', satisfaction: 7 }).score, null);
+
+// 9. 오늘 컨디션은 최근 수면 점수를 사용하고, 낮은 자기 보고는 낮음 단계로 제한
+{
+  const now = new Date('2026-10-31T08:00:00+09:00');
+  const records = [{ date: '2026-10-31', sleepMinutes: 420, satisfaction: 9, fatigue: 2 }];
+  const comfortable = S.scoreTodayCondition(records, null, now);
+  const low = S.scoreTodayCondition(records, 'low', now);
+  assert.equal(comfortable.score, 93);
+  assert.equal(comfortable.grade, '좋음');
+  assert.equal(low.score, 54);
+  assert.equal(low.grade, '낮음');
+}
+
+// 10. 오래된 기록과 점수 계산에 부족한 기록은 오늘 점수로 사용하지 않음
+{
+  const now = new Date('2026-10-31T08:00:00+09:00');
+  assert.equal(S.scoreTodayCondition([{ date: '2026-10-29', sleepMinutes: 420, satisfaction: 8 }], null, now).reason, 'stale');
+  assert.equal(S.scoreTodayCondition([{ date: '2026-10-31', satisfaction: 8 }], null, now).reason, 'insufficient');
+  assert.equal(S.scoreTodayCondition([], null, now).reason, 'missing');
+}
+console.log('today condition tests passed');
 console.log('all sleep tests passed');
