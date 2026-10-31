@@ -869,6 +869,13 @@ def sleep_score_script():
     )
 
 
+@app.get("/watch-monitor.js")
+def watch_monitor_script():
+    return send_from_directory(
+        app.root_path, "watch-monitor.js", mimetype="application/javascript"
+    )
+
+
 @app.get("/api/supabase-config")
 def supabase_config():
     # This is a publishable key; never expose a service_role key here.
@@ -1021,13 +1028,94 @@ def activity_response(show_modal, decision, reason, message, summary, modal=None
     )
 
 
+ACTIVITY_VIDEOS = {
+    "neck": {
+        "id": "ArfC7aXAOKY",
+        "title": "목 스트레칭과 근력강화운동",
+    },
+    "shoulder": {
+        "id": "4Z2L9YwF2w0",
+        "title": "어깨 스트레칭과 근력강화운동",
+    },
+    "ankle": {
+        "id": "XzT2W0DWPe0",
+        "title": "발목 스트레칭과 근력강화운동",
+    },
+    "back": {
+        "id": "iO6BF70mCm4",
+        "title": "허리 스트레칭과 근력강화운동",
+    },
+}
+ACTIVITY_ROUTINES = {
+    "주간": {
+        "title": "상쾌한 전신 활력 체조",
+        "body": "주간 근무 전에 목·어깨와 발목을 편안한 범위에서 풀며 천천히 몸을 깨워 보세요.",
+        "videos": ["neck", "shoulder", "ankle"],
+    },
+    "오후": {
+        "title": "하체 이완 및 스트레칭",
+        "body": "오후 근무 전에 발목과 하체를 가볍게 움직이고 어깨도 천천히 풀어 보세요.",
+        "videos": ["ankle", "shoulder", "neck"],
+    },
+    "야간": {
+        "title": "야간 대비 이완 루틴",
+        "body": "야간 근무 전에 허리와 어깨를 통증 없는 범위에서 부드럽게 움직여 보세요.",
+        "videos": ["back", "shoulder", "neck"],
+    },
+    "비번": {
+        "title": "가벼운 리프레시 풀코스 웰니스 세션",
+        "body": "비번에는 몸 상태에 맞춰 쉬거나, 목·어깨와 발목을 편안한 속도로 풀어 보세요.",
+        "videos": ["shoulder", "ankle", "neck"],
+    },
+    "휴무": {
+        "title": "가벼운 리프레시 풀코스 웰니스 세션",
+        "body": "휴무에는 몸 상태에 맞춰 쉬거나, 목·어깨와 발목을 편안한 속도로 풀어 보세요.",
+        "videos": ["shoulder", "ankle", "neck"],
+    },
+}
+
+
+def activity_routine_steps(shift_type, durations=None, video_keys=None):
+    routine = ACTIVITY_ROUTINES.get(shift_type, ACTIVITY_ROUTINES["휴무"])
+    durations = durations or [5, 5, 5]
+    video_keys = video_keys or routine["videos"]
+    steps = []
+    for index, (video_key, duration) in enumerate(zip(video_keys, durations), start=1):
+        video = ACTIVITY_VIDEOS[video_key]
+        step_title = video["title"].replace("과 근력강화운동", "")
+        steps.append(
+            {
+                "id": f"{shift_type}-{video_key}-{index}",
+                "title": step_title,
+                "durationMinutes": duration,
+                "description": "영상 속 동작은 통증 없는 범위에서 편안한 속도로 따라 해요. 불편하면 건너뛰거나 멈춰도 괜찮아요.",
+                "videoId": video["id"],
+                "videoTitle": video["title"],
+                "videoChannel": "울산광역시 취약노동자 건강증진센터",
+                "videoUrl": f"https://www.youtube.com/watch?v={video['id']}",
+            }
+        )
+    return steps
+
+
 @app.post("/v1/activity-recommendations/evaluate")
 def evaluate_activity_recommendation():
     data = request.get_json(silent=True) or {}
     now = datetime.now(ZoneInfo("Asia/Seoul"))
     today = now.date()
     shift = data.get("shift") if isinstance(data.get("shift"), dict) else {}
+    shift_type = shift.get("routineType", shift.get("todayType", "휴무"))
+    if shift_type not in ACTIVITY_ROUTINES:
+        shift_type = "휴무"
     work_hours = shift.get("workHours", {})
+    if data.get("discomfort") is True:
+        return activity_response(
+            False,
+            "rest",
+            "USER_REPORTED_DISCOMFORT",
+            "몸이 불편하다고 하셔서 오늘은 운동 루틴을 열지 않을게요. 편하게 쉬고, 통증이 계속되면 의료진과 상의해 주세요.",
+            "몸의 불편함을 우선해 운동 제안을 쉬고 있어요.",
+        )
     for offset, key in ((-1, "yesterdayType"), (0, "todayType")):
         shift_day = today + timedelta(days=offset)
         interval = shift_interval_for_day(shift_day, shift.get(key), work_hours)
@@ -1112,6 +1200,7 @@ def evaluate_activity_recommendation():
             "최근 수면시간을 참고해 휴식을 우선하고 있어요.",
         )
 
+    low_condition = data.get("comfortLevel") == "low"
     light_session = (
         sleep_unknown
         or (total_minutes is not None and total_minutes < 360)
@@ -1201,11 +1290,30 @@ def evaluate_activity_recommendation():
         reason = "NO_VERIFIED_PARK"
         summary = "가까운 공원 정보를 확인하지 못해 실내 활동을 준비했어요."
 
-    if light_session:
+    if low_condition:
+        mode = "indoor_activity"
+        reason = "LOW_COMFORT_SELECTED"
+        duration = 8
+        title = "8분 가벼운 호흡 및 이완 스트레칭"
+        body = "컨디션이 낮다고 선택하셔서 고강도 동작을 제외했어요. 호흡을 고르고 목·어깨를 편안한 범위에서 풀어 주세요."
+        summary = (
+            "컨디션이 낮아 추천 루틴을 조정했어요 · 8분 가벼운 호흡 및 이완 스트레칭"
+        )
+        steps = activity_routine_steps(shift_type, [4, 4], ["neck", "shoulder"])
+        steps[0]["title"] = "호흡과 목 이완"
+        steps[0]["description"] = (
+            "숨을 편안하게 내쉬며 목을 통증 없는 범위에서 천천히 움직여요."
+        )
+        steps[1]["title"] = "어깨 이완 스트레칭"
+        steps[1]["description"] = (
+            "어깨에 힘을 빼고 영상 속 동작을 편안한 범위에서 따라 해요."
+        )
+    elif light_session:
         mode = "indoor_activity"
         reason = reason or "LOW_RECOVERY_SELF_REPORT"
         duration = 5
-        title = "오늘은 짧고 가볍게"
+        short_title = ACTIVITY_ROUTINES[shift_type]["title"].replace(" 풀코스", "")
+        title = f"{short_title} · 5분 가볍게"
         if sleep_unknown:
             reason = "SLEEP_DATA_UNKNOWN"
             body = "수면 기록이 없어 컨디션을 추정하지 않았어요. 원한다면 부담이 적은 5분 실내 동작을 볼 수 있어요."
@@ -1213,68 +1321,23 @@ def evaluate_activity_recommendation():
         else:
             body = "최근 수면시간과 만족도·피로도를 참고해 5분 실내 루틴으로 준비했어요. 운동은 선택 사항입니다."
             summary = "최근 수면 기록을 참고해 짧은 실내 활동을 준비했어요."
-        steps = [
-            {
-                "id": "gentle-mobility",
-                "title": "부드러운 전신 움직임",
-                "durationMinutes": 5,
-                "description": "불편함이 없는 범위에서 편안하게 움직여요.",
-            }
-        ]
+        steps = activity_routine_steps(shift_type, [5])
     elif reason is not None:
         mode = "indoor_activity"
         duration = 15
-        title = "오늘은 실내에서 가볍게"
-        body = "실외 조건을 확인할 수 없어 실내 루틴을 준비했어요. 원하지 않으면 언제든 닫을 수 있어요."
-        steps = [
-            {
-                "id": "shoulder-release",
-                "title": "등과 어깨 풀기",
-                "durationMinutes": 5,
-                "description": "통증이 없는 범위에서 천천히 어깨를 움직여요.",
-            },
-            {
-                "id": "mobility",
-                "title": "전신 가동성 움직임",
-                "durationMinutes": 5,
-                "description": "숨이 편안한 속도로 관절을 부드럽게 움직여요.",
-            },
-            {
-                "id": "breathing",
-                "title": "호흡과 마무리",
-                "durationMinutes": 5,
-                "description": "편안한 호흡으로 마무리해요.",
-            },
-        ]
+        title = ACTIVITY_ROUTINES[shift_type]["title"]
+        body = f"{ACTIVITY_ROUTINES[shift_type]['body']} 원하지 않으면 언제든 멈출 수 있어요."
+        steps = activity_routine_steps(shift_type)
     else:
         mode = "outdoor_activity"
         duration = 15
         distance = numeric(park.get("distance_km")) or 0
         walk_one_way = math.ceil(distance * 15)
         estimated_total = duration + walk_one_way * 2
-        title = "가까운 공원에서 내 페이스대로"
-        body = f"{park.get('name', '가까운 공원')} 주변에서 편안한 속도로 걷기를 고려해 보세요. 운동 여부와 시간은 직접 선택할 수 있어요."
+        title = ACTIVITY_ROUTINES[shift_type]["title"]
+        body = f"{ACTIVITY_ROUTINES[shift_type]['body']} {park.get('name', '가까운 공원')} 주변에서 편안한 걷기를 선택할 수 있어요."
         summary = f"{current_condition} · 주변 측정소 대기질 {air_grades[0]}/{air_grades[1]} · 공원 정보 확인됨"
-        steps = [
-            {
-                "id": "walk-start",
-                "title": "천천히 걷기",
-                "durationMinutes": 5,
-                "description": "공원에서 편안한 속도로 걸으며 몸을 풀어요.",
-            },
-            {
-                "id": "walk-easy",
-                "title": "가벼운 산책",
-                "durationMinutes": 5,
-                "description": "대화할 수 있는 편안한 속도를 유지해요.",
-            },
-            {
-                "id": "walk-finish",
-                "title": "천천히 마무리 걷기",
-                "durationMinutes": 5,
-                "description": "속도를 낮추고 편하게 마무리해요.",
-            },
-        ]
+        steps = activity_routine_steps(shift_type)
         summary += f" · 공원까지 {distance:.1f}km"
 
     step_total = sum(step["durationMinutes"] for step in steps)
@@ -1291,10 +1354,15 @@ def evaluate_activity_recommendation():
                 "activity": {
                     "contentId": "reviewed-light-routine",
                     "durationMinutes": step_total,
+                    "shiftType": shift_type,
                     "steps": steps,
                 },
                 "actions": ["start_session", "dismiss"],
-                "notice": "운동 효과를 보장하거나 수면을 치료하는 처방이 아닙니다. 몸이 불편하면 중단하세요.",
+                "notice": (
+                    "컨디션이 낮다면 영상 속 근력 동작은 건너뛰고 호흡과 편안한 스트레칭만 해도 괜찮아요. 통증·어지럼이 있으면 멈춰 주세요."
+                    if low_condition
+                    else "공공기관의 일반 운동 안내 영상입니다. 무리하지 말고 통증·어지럼이 있으면 멈춰 주세요. 의료 처방이나 수면 치료가 아닙니다."
+                ),
             },
         }
     )
