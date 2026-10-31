@@ -1035,6 +1035,95 @@ def activity_response(show_modal, decision, reason, message, summary, modal=None
     )
 
 
+RECENT_SLEEP_WINDOW = timedelta(hours=36)
+MIN_ACTIVITY_MINUTES = 3
+
+
+def parse_activity_sleep_date(record):
+    try:
+        return datetime.strptime(str(record.get("date", "")), "%Y-%m-%d").replace(
+            hour=12, tzinfo=ZoneInfo("Asia/Seoul")
+        )
+    except ValueError:
+        return None
+
+
+def activity_sleep_score(record, total_minutes):
+    domains = []
+    if total_minutes is not None:
+        if total_minutes <= 240:
+            duration_score = 0
+        elif total_minutes < 360:
+            duration_score = (total_minutes - 240) / 120 * 60
+        elif total_minutes < 420:
+            duration_score = 60 + (total_minutes - 360) / 60 * 40
+        else:
+            duration_score = 100
+        domains.append(duration_score)
+
+    continuity = []
+    for key, good, poor in (
+        ("latencyMin", 30, 45),
+        ("wasoMin", 20, 41),
+        ("awakenings", 1, 4),
+    ):
+        value = numeric(record.get(key))
+        if value is not None:
+            continuity.append(max(0, min(100, (poor - value) / (poor - good) * 100)))
+
+    efficiency = numeric(record.get("efficiencyPct"))
+    if efficiency is None:
+        in_bed = numeric(record.get("inBedMinutes"))
+        sleep_minutes = numeric(record.get("sleepMinutes"))
+        if in_bed and in_bed > 0 and sleep_minutes is not None:
+            efficiency = sleep_minutes / in_bed * 100
+    if efficiency is not None:
+        continuity.append(max(0, min(100, (efficiency - 64) / (85 - 64) * 100)))
+    if continuity:
+        domains.append(sum(continuity) / len(continuity))
+
+    satisfaction = numeric(record.get("satisfaction"))
+    if satisfaction is not None:
+        domains.append((max(1, min(10, satisfaction)) - 1) / 9 * 100)
+    fatigue = numeric(record.get("fatigue"))
+    if fatigue is not None:
+        domains.append((10 - max(1, min(10, fatigue))) / 9 * 100)
+
+    if len(domains) < 2:
+        return None
+    return math.floor(sum(domains) / len(domains) + 0.5)
+
+
+def activity_step_limit(steps, minutes):
+    if minutes is None:
+        return steps
+    remaining = minutes
+    limited = []
+    for step in steps:
+        duration = numeric(step.get("durationMinutes"))
+        if duration is None or duration <= 0:
+            continue
+        if duration <= remaining:
+            limited.append(step)
+            remaining -= int(duration)
+        elif remaining >= MIN_ACTIVITY_MINUTES:
+            limited.append({**step, "durationMinutes": remaining})
+            break
+        else:
+            break
+    return limited
+
+
+def parse_activity_datetime(value):
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo("Asia/Seoul"))
+    return parsed.astimezone(ZoneInfo("Asia/Seoul"))
+
+
 ACTIVITY_VIDEOS = {
     "neck": {
         "id": "ArfC7aXAOKY",
@@ -1157,6 +1246,17 @@ def evaluate_activity_recommendation():
         except ValueError:
             pass
 
+    available = numeric(shift.get("availableMinutes"))
+    if available is not None and available < MIN_ACTIVITY_MINUTES:
+        return activity_response(
+            False,
+            "suppress",
+            "NOT_ENOUGH_TIME",
+            "지금은 쓸 수 있는 시간이 짧아요. 다음 여유 시간에 다시 알려 드릴게요.",
+            "가용 시간이 3분 미만이에요.",
+        )
+    available_limit = math.floor(available) if available is not None else None
+
     sleep_data = data.get("sleep") if isinstance(data.get("sleep"), dict) else {}
     if sleep_data.get("isSleeping") is True:
         return activity_response(
@@ -1166,19 +1266,45 @@ def evaluate_activity_recommendation():
             "예정된 수면 시간은 방해하지 않을게요. 충분히 쉬어 주세요.",
             "수면 보호 시간을 적용했어요.",
         )
+    kss = numeric(sleep_data.get("kss"))
+    if kss is not None and 7 <= kss <= 9:
+        return activity_response(
+            False,
+            "rest",
+            "HIGH_SLEEPINESS",
+            "졸림 정도가 높게 기록되어 있어요. 지금은 운동보다 안전과 휴식을 우선해 주세요.",
+            "졸림 척도(KSS) 응답을 참고해 휴식을 우선하고 있어요.",
+        )
+    condition_score = numeric(data.get("conditionScore"))
+    if condition_score is not None and not 0 <= condition_score <= 100:
+        condition_score = None
+    if condition_score is not None and condition_score < 35:
+        return activity_response(
+            False,
+            "rest",
+            "VERY_LOW_CONDITION_SCORE",
+            "컨디션 점수가 매우 낮아 오늘은 운동보다 휴식을 우선해 주세요.",
+            "매우 낮은 컨디션 점수를 참고해 휴식을 우선하고 있어요.",
+        )
+    planned_sleep = parse_activity_datetime(sleep_data.get("plannedSleepStart"))
+    near_planned_sleep = bool(
+        planned_sleep and now < planned_sleep <= now + timedelta(minutes=60)
+    )
+
     records = sleep_data.get("records", [])
     if not isinstance(records, list):
         records = []
     recent = sorted(
-        [record for record in records[:14] if isinstance(record, dict)],
+        (record for record in records if isinstance(record, dict)),
         key=lambda record: str(record.get("date", "")),
         reverse=True,
-    )
+    )[:14]
     latest = next(
         (
             record
             for record in recent
-            if str(record.get("date", "")) <= today.isoformat()
+            if (record_date := parse_activity_sleep_date(record)) is not None
+            and timedelta(hours=-12) <= now - record_date <= RECENT_SLEEP_WINDOW
         ),
         None,
     )
@@ -1186,10 +1312,12 @@ def evaluate_activity_recommendation():
     fatigue = numeric(latest.get("fatigue")) if latest else None
     satisfaction = numeric(latest.get("satisfaction")) if latest else None
     sleep_unknown = latest is None
+    sleep_score = None
     if latest:
         main_sleep = numeric(latest.get("sleepMinutes"))
         nap_sleep = numeric(latest.get("napMinutes", 0)) or 0
         total_minutes = main_sleep + nap_sleep if main_sleep is not None else None
+        sleep_score = activity_sleep_score(latest, total_minutes)
     if fatigue is not None and fatigue >= 8:
         return activity_response(
             False,
@@ -1207,12 +1335,26 @@ def evaluate_activity_recommendation():
             "최근 수면시간을 참고해 휴식을 우선하고 있어요.",
         )
 
+    if sleep_score is not None and sleep_score < 55:
+        sleep_limit = 5
+    elif sleep_score is not None and sleep_score < 75:
+        sleep_limit = 10
+    else:
+        sleep_limit = None
+    if condition_score is not None and condition_score < 55:
+        condition_limit = 5
+    elif condition_score is not None and condition_score < 75:
+        condition_limit = 10
+    else:
+        condition_limit = None
     low_condition = data.get("comfortLevel") == "low"
     light_session = (
         sleep_unknown
         or (total_minutes is not None and total_minutes < 360)
         or (fatigue is not None and fatigue >= 6)
         or (satisfaction is not None and satisfaction <= 3)
+        or (sleep_score is not None and sleep_score < 55)
+        or near_planned_sleep
     )
     weather = data.get("weather") if isinstance(data.get("weather"), dict) else None
     nearby = data.get("nearby") if isinstance(data.get("nearby"), dict) else None
@@ -1347,7 +1489,24 @@ def evaluate_activity_recommendation():
         steps = activity_routine_steps(shift_type)
         summary += f" · 공원까지 {distance:.1f}km"
 
+    time_limits = [
+        limit
+        for limit in (
+            available_limit,
+            sleep_limit,
+            condition_limit,
+            5 if near_planned_sleep else None,
+        )
+        if limit is not None
+    ]
+    original_duration = duration
+    if time_limits:
+        steps = activity_step_limit(steps, min(time_limits))
     step_total = sum(step["durationMinutes"] for step in steps)
+    if step_total < original_duration:
+        summary += f" · 조건과 가용 시간에 맞춰 {step_total}분으로 조정했어요."
+        if title.startswith(f"{original_duration}분"):
+            title = title.replace(f"{original_duration}분", f"{step_total}분", 1)
     return jsonify(
         {
             "showModal": True,
