@@ -36,6 +36,13 @@ WEATHER_STALE_TTL_SECONDS = 1800
 WEATHER_CACHE = TTLCache(maxsize=100, ttl=WEATHER_CACHE_TTL_SECONDS)
 WEATHER_LAST_GOOD = TTLCache(maxsize=100, ttl=WEATHER_STALE_TTL_SECONDS)
 WEATHER_CACHE_LOCK = Lock()
+PARK_EARLIEST_HOUR = 6
+PARK_LATEST_HOUR = 18
+POST_WORK_WINDOW = timedelta(hours=3)
+
+
+def current_kst():
+    return datetime.now(ZoneInfo("Asia/Seoul"))
 
 
 def create_retry_session():
@@ -970,12 +977,20 @@ def nearby():
 
     recommendations = []
     if nearby_results["parks"]:
-        recommendations.append(
-            {
-                "title": "공원에서 가볍게 달리기",
-                "text": "가까운 공원까지 걸어가서 편안한 속도로 산책이나 조깅을 해보세요.",
-            }
-        )
+        if PARK_EARLIEST_HOUR <= current_kst().hour < PARK_LATEST_HOUR:
+            recommendations.append(
+                {
+                    "title": "공원에서 가볍게 걷기",
+                    "text": "가까운 공원까지 걸어가서 편안한 속도로 산책해 보세요.",
+                }
+            )
+        else:
+            recommendations.append(
+                {
+                    "title": "공원은 밝은 시간에 이용해요",
+                    "text": "지금은 늦은 시간이라 공원 대신 실내에서 가볍게 움직여 보세요. 공원 목록은 다음에 참고하세요.",
+                }
+            )
     if nearby_results["facilities"]:
         recommendations.append(
             {
@@ -1020,6 +1035,60 @@ def shift_interval_for_day(day, shift_type, work_hours):
     if end <= start:
         end += timedelta(days=1)
     return start, end
+
+
+def last_shift_end(now, shift, work_hours):
+    aliases = {"day": "주간", "evening": "오후", "night": "야간", "off": "휴무"}
+    explicit = shift.get("lastShiftEnd") or shift.get("prevShiftEnd")
+    if explicit:
+        try:
+            end = datetime.fromisoformat(str(explicit).replace("Z", "+00:00"))
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=ZoneInfo("Asia/Seoul"))
+            end = end.astimezone(ZoneInfo("Asia/Seoul"))
+            if end <= now:
+                shift_type = shift.get("lastShiftType") or shift.get("prevShiftType")
+                return aliases.get(shift_type, shift_type), end
+        except ValueError:
+            pass
+
+    latest = None
+    for offset, key in ((-1, "yesterdayType"), (0, "todayType")):
+        shift_type = shift.get(key)
+        interval = shift_interval_for_day(
+            now.date() + timedelta(days=offset), shift_type, work_hours
+        )
+        if (
+            interval
+            and interval[1] <= now
+            and (latest is None or interval[1] > latest[1])
+        ):
+            latest = (shift_type, interval[1])
+    return latest
+
+
+def late_shift_end_reason(now, shift, work_hours):
+    found = last_shift_end(now, shift, work_hours)
+    if not found:
+        return None
+    shift_type, end = found
+    if now - end > POST_WORK_WINDOW:
+        return None
+    shift_type = {"day": "주간", "evening": "오후", "night": "야간", "off": "휴무"}.get(
+        shift_type, shift_type
+    )
+    end_text = end.strftime("%H:%M")
+    if shift_type == "야간":
+        return (
+            "AFTER_NIGHT_SHIFT",
+            f"야간 근무를 {end_text}에 마쳤어요. 퇴근 후에는 수면이 먼저라 공원 대신 실내에서 가볍게 풀어요.",
+        )
+    if end.hour >= PARK_LATEST_HOUR or end.hour < PARK_EARLIEST_HOUR:
+        return (
+            "LATE_SHIFT_END",
+            f"{end_text} 퇴근으로 늦은 시간이라 공원은 권하지 않아요. 실내에서 가볍게 풀어요.",
+        )
+    return None
 
 
 def activity_response(show_modal, decision, reason, message, summary, modal=None):
@@ -1197,7 +1266,7 @@ def activity_routine_steps(shift_type, durations=None, video_keys=None):
 @app.post("/v1/activity-recommendations/evaluate")
 def evaluate_activity_recommendation():
     data = request.get_json(silent=True) or {}
-    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    now = current_kst()
     today = now.date()
     shift = data.get("shift") if isinstance(data.get("shift"), dict) else {}
     check_in = data.get("checkIn") if isinstance(data.get("checkIn"), dict) else {}
@@ -1299,7 +1368,9 @@ def evaluate_activity_recommendation():
             "slightly_sleepy": 5,
             "very_sleepy": 8,
         }.get(check_in.get("sleepiness"))
-    if kss is not None and 7 <= kss <= 9:
+    if kss is not None and not 1 <= kss <= 10:
+        kss = None
+    if kss is not None and kss >= 7:
         return activity_response(
             False,
             "rest",
@@ -1356,7 +1427,14 @@ def evaluate_activity_recommendation():
         main_sleep = numeric(latest.get("sleepMinutes"))
         nap_sleep = numeric(latest.get("napMinutes", 0)) or 0
         total_minutes = main_sleep + nap_sleep if main_sleep is not None else None
-        sleep_score = activity_sleep_score(latest, total_minutes)
+        saved_score = (
+            latest.get("score") if isinstance(latest.get("score"), dict) else {}
+        )
+        sleep_score = numeric(saved_score.get("total"))
+        if sleep_score is not None and not 0 <= sleep_score <= 100:
+            sleep_score = None
+        if sleep_score is None:
+            sleep_score = activity_sleep_score(latest, total_minutes)
     if fatigue is not None and fatigue >= 8:
         return activity_response(
             False,
@@ -1460,10 +1538,16 @@ def evaluate_activity_recommendation():
     else:
         summary = "수면·근무와 최신 날씨·대기질을 확인했어요."
 
-    if reason is None and (now.hour < 6 or now.hour >= 18):
+    if reason is None:
+        late_end = late_shift_end_reason(now, shift, work_hours)
+        if late_end:
+            reason, summary = late_end
+    if reason is None and (
+        now.hour < PARK_EARLIEST_HOUR or now.hour >= PARK_LATEST_HOUR
+    ):
         reason = "PARK_ACCESS_UNKNOWN"
         summary = (
-            "이 시간대의 공원 개방·조명 정보를 확인하지 못해 실외 제안은 제외했어요."
+            "늦은 시간이라 공원 개방·조명을 확인할 수 없어 실외 제안은 제외했어요."
         )
 
     parks = nearby.get("parks", []) if nearby else []
@@ -1544,6 +1628,32 @@ def evaluate_activity_recommendation():
     if time_limits:
         steps = activity_step_limit(steps, min(time_limits))
     step_total = sum(step["durationMinutes"] for step in steps)
+    if mode == "outdoor_activity":
+        walk_minutes = walk_one_way * 2
+        park_activity_budget = (
+            available_limit - walk_minutes if available_limit is not None else None
+        )
+        if (
+            park_activity_budget is not None
+            and park_activity_budget < MIN_ACTIVITY_MINUTES
+        ):
+            mode = "indoor_activity"
+            reason = "NOT_ENOUGH_TIME_FOR_PARK"
+            body = f"{ACTIVITY_ROUTINES[shift_type]['body']} 원하지 않으면 언제든 멈출 수 있어요."
+            summary = "공원까지 오가는 시간이 부족해 실내 루틴으로 준비했어요."
+        else:
+            if park_activity_budget is not None and step_total > park_activity_budget:
+                steps = activity_step_limit(steps, park_activity_budget)
+                step_total = sum(step["durationMinutes"] for step in steps)
+            park_deadline = now.replace(
+                hour=PARK_LATEST_HOUR, minute=0, second=0, microsecond=0
+            )
+            projected_end = now + timedelta(minutes=walk_minutes + step_total)
+            if projected_end > park_deadline:
+                mode = "indoor_activity"
+                reason = "PARK_TOO_LATE"
+                body = f"{ACTIVITY_ROUTINES[shift_type]['body']} 원하지 않으면 언제든 멈출 수 있어요."
+                summary = f"공원까지 오가면 {PARK_LATEST_HOUR}시를 넘겨 끝나서 실내 루틴으로 준비했어요."
     if step_total < original_duration:
         summary += f" · 조건과 가용 시간에 맞춰 {step_total}분으로 조정했어요."
         if title.startswith(f"{original_duration}분"):

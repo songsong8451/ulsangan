@@ -85,6 +85,29 @@ class ActivityRecommendationTests(unittest.TestCase):
         self.assertFalse(result["showModal"])
         self.assertEqual(result["reasonCodes"], ["HIGH_SLEEPINESS"])
 
+    def test_kss_ten_is_valid_and_prioritizes_rest(self):
+        result = self.evaluate(sleep={"kss": 10, "records": [self.good_sleep_record()]})
+        self.assertFalse(result["showModal"])
+        self.assertEqual(result["reasonCodes"], ["HIGH_SLEEPINESS"])
+
+    def test_out_of_range_kss_is_ignored(self):
+        for kss in (0, 99):
+            with self.subTest(kss=kss):
+                result = self.evaluate(
+                    sleep={"kss": kss, "records": [self.good_sleep_record()]}
+                )
+                self.assertTrue(result["showModal"])
+
+    def test_engine_uses_saved_sfs_score_before_fallback_score(self):
+        record = self.good_sleep_record(satisfaction=6, fatigue=4)
+        record["score"] = {"total": 76}
+        saved_score = self.evaluate(sleep={"records": [record]})
+        fallback_score = self.evaluate(
+            sleep={"records": [self.good_sleep_record(satisfaction=6, fatigue=4)]}
+        )
+        self.assertEqual(self.step_minutes(saved_score), 15)
+        self.assertEqual(self.step_minutes(fallback_score), 10)
+
     def test_very_low_condition_score_prioritizes_rest(self):
         result = self.evaluate(
             conditionScore=34, sleep={"records": [self.good_sleep_record()]}
@@ -163,6 +186,159 @@ class ActivityRecommendationTests(unittest.TestCase):
             }
         )
         self.assertEqual(self.step_minutes(result), 5)
+
+
+class ParkAfterWorkTimeTests(unittest.TestCase):
+    WORK_HOURS = {
+        "주간": {"start": "07:00", "end": "15:00"},
+        "오후": {"start": "15:00", "end": "23:00"},
+        "야간": {"start": "23:00", "end": "07:00"},
+    }
+
+    def setUp(self):
+        self.client = app.test_client()
+
+    def at(self, day, hour, minute=0):
+        return datetime(2026, 11, day, hour, minute, tzinfo=KST)
+
+    def evaluate_at(self, now, shift=None, parks=None):
+        from unittest.mock import patch
+
+        fmt = lambda value: value.strftime("%Y-%m-%d %H:%M")
+        shift_input = {
+            "todayType": "휴무",
+            "yesterdayType": "휴무",
+            "routineType": "휴무",
+            "workHours": self.WORK_HOURS,
+            "availableMinutes": 30,
+            **(shift or {}),
+        }
+        payload = {
+            "shift": shift_input,
+            "sleep": {
+                "records": [
+                    {
+                        "date": now.date().isoformat(),
+                        "sleepMinutes": 450,
+                        "satisfaction": 9,
+                        "fatigue": 2,
+                    }
+                ]
+            },
+            "weather": {
+                "updated_at": fmt(now - timedelta(minutes=2)),
+                "current": {
+                    "observed_at": fmt(now - timedelta(minutes=30)),
+                    "condition": "맑음",
+                },
+                "forecast": [{"condition": "맑음", "rain_probability": 0}],
+                "air_quality": {
+                    "ok": True,
+                    "data_time": fmt(now - timedelta(minutes=40)),
+                    "pm10": {"grade": "좋음"},
+                    "pm25": {"grade": "좋음"},
+                },
+            },
+            "nearby": {"parks": parks or [{"name": "테스트공원", "distance_km": 0.3}]},
+        }
+        with patch("app.current_kst", return_value=now):
+            return self.client.post(
+                "/v1/activity-recommendations/evaluate", json=payload
+            ).get_json()
+
+    def nearby_recommendations_at(self, now):
+        from unittest.mock import patch
+
+        def provider_records(provider, response_format, province):
+            if provider == "parks":
+                return ([{"name": "테스트공원", "lat": 35.54, "lon": 129.3}], 1)
+            return ([], 0)
+
+        with (
+            patch("app.current_kst", return_value=now),
+            patch("app.reverse_geocode", return_value=("울산", "울산광역시")),
+            patch("app.load_provider_records", side_effect=provider_records),
+        ):
+            response = self.client.post(
+                "/api/nearby", json={"lat": 35.54, "lon": 129.3, "radius": 3}
+            )
+        self.assertEqual(response.status_code, 200)
+        return response.get_json()["recommendations"]
+
+    def test_day_shift_end_allows_park_while_still_bright(self):
+        result = self.evaluate_at(
+            self.at(2, 15, 30),
+            {"todayType": "주간", "routineType": "주간"},
+        )
+        self.assertEqual(result["decision"], "outdoor_activity")
+
+    def test_late_evening_shift_end_uses_indoor_activity(self):
+        result = self.evaluate_at(
+            self.at(2, 23, 20),
+            {"todayType": "오후", "routineType": "오후"},
+        )
+        self.assertEqual(result["decision"], "indoor_activity")
+        self.assertEqual(result["reasonCodes"], ["LATE_SHIFT_END"])
+        self.assertIn("23:00 퇴근", result["conditionSummary"])
+
+    def test_recent_night_shift_end_prioritizes_sleep(self):
+        result = self.evaluate_at(
+            self.at(3, 7, 40),
+            {"yesterdayType": "야간", "routineType": "비번"},
+        )
+        self.assertEqual(result["decision"], "indoor_activity")
+        self.assertEqual(result["reasonCodes"], ["AFTER_NIGHT_SHIFT"])
+
+    def test_custom_late_day_shift_end_uses_indoor_activity(self):
+        hours = {**self.WORK_HOURS, "주간": {"start": "10:00", "end": "19:00"}}
+        result = self.evaluate_at(
+            self.at(2, 19, 10),
+            {"todayType": "주간", "routineType": "주간", "workHours": hours},
+        )
+        self.assertEqual(result["reasonCodes"], ["LATE_SHIFT_END"])
+
+    def test_explicit_last_shift_end_is_considered(self):
+        result = self.evaluate_at(
+            self.at(2, 21),
+            {
+                "lastShiftEnd": "2026-11-02T20:30:00+09:00",
+                "lastShiftType": "주간",
+            },
+        )
+        self.assertEqual(result["reasonCodes"], ["LATE_SHIFT_END"])
+
+    def test_round_trip_that_exceeds_available_time_switches_indoor(self):
+        result = self.evaluate_at(
+            self.at(2, 15, 30),
+            {"todayType": "주간", "routineType": "주간", "availableMinutes": 5},
+            parks=[{"name": "먼공원", "distance_km": 1.0}],
+        )
+        self.assertEqual(result["decision"], "indoor_activity")
+        self.assertEqual(result["reasonCodes"], ["NOT_ENOUGH_TIME_FOR_PARK"])
+
+    def test_park_session_that_finishes_after_six_pm_switches_indoor(self):
+        result = self.evaluate_at(
+            self.at(2, 17, 40),
+            {"availableMinutes": 30},
+            parks=[{"name": "먼공원", "distance_km": 0.5}],
+        )
+        self.assertEqual(result["decision"], "indoor_activity")
+        self.assertEqual(result["reasonCodes"], ["PARK_TOO_LATE"])
+
+    def test_park_reopens_for_recommendation_after_late_shift_window(self):
+        result = self.evaluate_at(
+            self.at(3, 10),
+            {"yesterdayType": "오후", "routineType": "휴무"},
+        )
+        self.assertEqual(result["decision"], "outdoor_activity")
+
+    def test_day_off_at_night_does_not_recommend_park(self):
+        result = self.evaluate_at(self.at(2, 19, 30))
+        self.assertEqual(result["reasonCodes"], ["PARK_ACCESS_UNKNOWN"])
+
+    def test_nearby_page_uses_an_indoor_nudge_after_park_hours(self):
+        recommendations = self.nearby_recommendations_at(self.at(2, 19, 30))
+        self.assertEqual(recommendations[0]["title"], "공원은 밝은 시간에 이용해요")
 
 
 if __name__ == "__main__":
