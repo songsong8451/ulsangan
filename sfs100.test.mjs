@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import * as SFS100 from './sfs100.js';
 
+assert.equal(SFS100.alertPts(1), 20);
+assert.equal(SFS100.alertPts(10), 0);
+assert.equal(SFS100.alertPts(0), 20);
+assert.equal(SFS100.alertPts(11), 0);
+
+const notTired = SFS100.scoreSleep({ totalMinutes: 420, satisfaction: 8, fatigue: 1 });
+const veryTired = SFS100.scoreSleep({ totalMinutes: 420, satisfaction: 8, fatigue: 10 });
+assert.ok(notTired.total > veryTired.total);
+
 const recovered = SFS100.energyScore({
   todaySfs: 90,
   last3Sfs: [90, 80, 100],

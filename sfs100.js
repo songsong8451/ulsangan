@@ -20,7 +20,12 @@ export function durationPts(tstH, firstOffAfterNights = false) {
   if (tstH < 10) return firstOffAfterNights ? 30 : 30 - (tstH - 9) * 6;
   return firstOffAfterNights ? 30 : 20;
 }
-export const alertPts = (fatigue) => ((10 - fatigue) / 9) * 20;   // 피로도 1 = 피로 없음
+export const alertPts = (fatigue) => {
+  const value = Number(fatigue);
+  if (!Number.isFinite(value)) return 0;
+  // 1 means rested and earns more points; 10 means very tired and earns fewer.
+  return ((10 - Math.max(1, Math.min(10, value))) / 9) * 20;
+};
 export const satisPts = (sat) => ((sat - 1) / 9) * 15;
 
 export function timingPts({ restGapH, shiftType, onsetAfterShiftEndH, preNightNap, nightWindowShare }) {
