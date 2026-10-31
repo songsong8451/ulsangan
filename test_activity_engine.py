@@ -97,6 +97,12 @@ class ActivityRecommendationTests(unittest.TestCase):
                     sleep={"kss": kss, "records": [self.good_sleep_record()]}
                 )
                 self.assertTrue(result["showModal"])
+        fallback = self.evaluate(
+            sleep={"kss": 99, "records": [self.good_sleep_record()]},
+            checkIn={"sleepiness": "very_sleepy", "intent": "move"},
+        )
+        self.assertFalse(fallback["showModal"])
+        self.assertEqual(fallback["reasonCodes"], ["HIGH_SLEEPINESS"])
 
     def test_engine_uses_saved_sfs_score_before_fallback_score(self):
         record = self.good_sleep_record(satisfaction=6, fatigue=4)
@@ -315,6 +321,20 @@ class ParkAfterWorkTimeTests(unittest.TestCase):
         )
         self.assertEqual(result["decision"], "indoor_activity")
         self.assertEqual(result["reasonCodes"], ["NOT_ENOUGH_TIME_FOR_PARK"])
+
+    def test_park_walk_time_is_subtracted_from_activity_budget(self):
+        result = self.evaluate_at(
+            self.at(2, 15, 30),
+            {"todayType": "주간", "routineType": "주간", "availableMinutes": 15},
+            parks=[{"name": "가까운공원", "distance_km": 0.3}],
+        )
+        self.assertEqual(result["decision"], "outdoor_activity")
+        self.assertEqual(
+            sum(
+                step["durationMinutes"] for step in result["modal"]["activity"]["steps"]
+            ),
+            5,
+        )
 
     def test_park_session_that_finishes_after_six_pm_switches_indoor(self):
         result = self.evaluate_at(

@@ -1362,14 +1362,14 @@ def evaluate_activity_recommendation():
             "수면 보호 시간을 적용했어요.",
         )
     kss = numeric(sleep_data.get("kss", data.get("kss")))
+    if kss is not None and not 1 <= kss <= 10:
+        kss = None
     if kss is None:
         kss = {
             "not_sleepy": 2,
             "slightly_sleepy": 5,
             "very_sleepy": 8,
         }.get(check_in.get("sleepiness"))
-    if kss is not None and not 1 <= kss <= 10:
-        kss = None
     if kss is not None and kss >= 7:
         return activity_response(
             False,
