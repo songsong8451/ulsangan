@@ -861,6 +861,13 @@ def shiftfit_logo():
     return send_from_directory(app.root_path, "shiftfit-logo.png", mimetype="image/png")
 
 
+@app.get("/sleep-score.js")
+def sleep_score_script():
+    return send_from_directory(
+        app.root_path, "sleep-score.js", mimetype="application/javascript"
+    )
+
+
 @app.get("/api/supabase-config")
 def supabase_config():
     # This is a publishable key; never expose a service_role key here.

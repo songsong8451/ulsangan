@@ -52,12 +52,29 @@ create table if not exists public.sleep_records (
   user_id uuid not null references auth.users(id) on delete cascade,
   sleep_date date not null,
   sleep_minutes integer not null check (sleep_minutes between 0 and 1440),
+  nap_minutes integer check (nap_minutes between 0 and 1440),
   satisfaction_score smallint not null check (satisfaction_score between 1 and 10),
   wake_fatigue_score smallint not null check (wake_fatigue_score between 1 and 10),
+  latency_min integer check (latency_min between 0 and 1440),
+  waso_min integer check (waso_min between 0 and 1440),
+  awakenings smallint check (awakenings between 0 and 100),
+  in_bed_minutes integer check (in_bed_minutes between 1 and 1440),
+  sleep_start time,
+  shift_before text check (shift_before in ('주간', '오후', '야간', '비번', '휴무')),
+  source text not null default 'self' check (source in ('self', 'wearable')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (user_id, sleep_date)
 );
+
+alter table public.sleep_records add column if not exists nap_minutes integer check (nap_minutes between 0 and 1440);
+alter table public.sleep_records add column if not exists latency_min integer check (latency_min between 0 and 1440);
+alter table public.sleep_records add column if not exists waso_min integer check (waso_min between 0 and 1440);
+alter table public.sleep_records add column if not exists awakenings smallint check (awakenings between 0 and 100);
+alter table public.sleep_records add column if not exists in_bed_minutes integer check (in_bed_minutes between 1 and 1440);
+alter table public.sleep_records add column if not exists sleep_start time;
+alter table public.sleep_records add column if not exists shift_before text check (shift_before in ('주간', '오후', '야간', '비번', '휴무'));
+alter table public.sleep_records add column if not exists source text not null default 'self' check (source in ('self', 'wearable'));
 
 create index if not exists inbody_records_user_date_idx
   on public.inbody_records (user_id, measured_on desc);
