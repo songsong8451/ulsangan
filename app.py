@@ -7,7 +7,7 @@ import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 from threading import Lock
 from urllib.parse import quote
@@ -811,6 +811,7 @@ def weather():
         current["temperature"] = next_forecasts[0]["temperature"]
     payload = {
         "location": location_label,
+        "coordinates": {"lat": lat, "lon": lon},
         "current": current,
         "forecast": next_forecasts,
         "air_quality": air_quality,
@@ -986,6 +987,317 @@ def nearby():
         "notice": "공공데이터의 위치·시설 정보는 최신 현장 상황과 다를 수 있어요. 방문 전 운영 여부를 확인해 주세요.",
     }
     return xml_response(payload) if response_format == "xml" else jsonify(payload)
+
+
+def shift_interval_for_day(day, shift_type, work_hours):
+    if shift_type not in {"주간", "오후", "야간"}:
+        return None
+    times = work_hours.get(shift_type, {}) if isinstance(work_hours, dict) else {}
+    start_text, end_text = times.get("start"), times.get("end")
+    if not start_text or not end_text:
+        return None
+    try:
+        start_time = datetime.strptime(start_text, "%H:%M").time()
+        end_time = datetime.strptime(end_text, "%H:%M").time()
+    except ValueError:
+        return None
+    start = datetime.combine(day, start_time, tzinfo=ZoneInfo("Asia/Seoul"))
+    end = datetime.combine(day, end_time, tzinfo=ZoneInfo("Asia/Seoul"))
+    if end <= start:
+        end += timedelta(days=1)
+    return start, end
+
+
+def activity_response(show_modal, decision, reason, message, summary, modal=None):
+    return jsonify(
+        {
+            "showModal": show_modal,
+            "decision": decision,
+            "reasonCodes": [reason],
+            "message": message,
+            "conditionSummary": summary,
+            "modal": modal,
+        }
+    )
+
+
+@app.post("/v1/activity-recommendations/evaluate")
+def evaluate_activity_recommendation():
+    data = request.get_json(silent=True) or {}
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    today = now.date()
+    shift = data.get("shift") if isinstance(data.get("shift"), dict) else {}
+    work_hours = shift.get("workHours", {})
+    for offset, key in ((-1, "yesterdayType"), (0, "todayType")):
+        shift_day = today + timedelta(days=offset)
+        interval = shift_interval_for_day(shift_day, shift.get(key), work_hours)
+        if interval and interval[0] <= now < interval[1]:
+            if shift.get("onBreak") and interval[1] > now + timedelta(minutes=5):
+                continue
+            return activity_response(
+                False,
+                "suppress",
+                "WORKING_SHIFT",
+                "현재는 근무 시간으로 설정되어 있어요. 허용된 휴게시간이 아니라면 운동 제안은 쉬어 갈게요.",
+                "근무시간을 우선 보호하고 있어요.",
+            )
+
+    next_shift_start = shift.get("nextShiftStart")
+    if next_shift_start:
+        try:
+            next_start = datetime.fromisoformat(
+                str(next_shift_start).replace("Z", "+00:00")
+            )
+            if next_start.tzinfo is None:
+                next_start = next_start.replace(tzinfo=ZoneInfo("Asia/Seoul"))
+            next_start = next_start.astimezone(ZoneInfo("Asia/Seoul"))
+            if now < next_start <= now + timedelta(minutes=15):
+                return activity_response(
+                    False,
+                    "suppress",
+                    "NEXT_SHIFT_SOON",
+                    "다음 근무까지 여유가 부족해요. 출근 준비와 휴식을 먼저 챙겨 주세요.",
+                    "다음 근무 준비 시간을 보호하고 있어요.",
+                )
+        except ValueError:
+            pass
+
+    sleep_data = data.get("sleep") if isinstance(data.get("sleep"), dict) else {}
+    if sleep_data.get("isSleeping") is True:
+        return activity_response(
+            False,
+            "suppress",
+            "PLANNED_SLEEP",
+            "예정된 수면 시간은 방해하지 않을게요. 충분히 쉬어 주세요.",
+            "수면 보호 시간을 적용했어요.",
+        )
+    records = sleep_data.get("records", [])
+    if not isinstance(records, list):
+        records = []
+    recent = sorted(
+        [record for record in records[:14] if isinstance(record, dict)],
+        key=lambda record: str(record.get("date", "")),
+        reverse=True,
+    )
+    latest = next(
+        (
+            record
+            for record in recent
+            if str(record.get("date", "")) <= today.isoformat()
+        ),
+        None,
+    )
+    total_minutes = None
+    fatigue = numeric(latest.get("fatigue")) if latest else None
+    satisfaction = numeric(latest.get("satisfaction")) if latest else None
+    sleep_unknown = latest is None
+    if latest:
+        main_sleep = numeric(latest.get("sleepMinutes"))
+        nap_sleep = numeric(latest.get("napMinutes", 0)) or 0
+        total_minutes = main_sleep + nap_sleep if main_sleep is not None else None
+    if fatigue is not None and fatigue >= 8:
+        return activity_response(
+            False,
+            "suppress",
+            "HIGH_REPORTED_FATIGUE",
+            "최근 기상 후 피로도가 높게 기록되어 있어요. 오늘은 운동보다 푹 쉬는 것을 우선해 주세요.",
+            "최근 수면 기록의 피로도 응답을 참고해 휴식을 우선하고 있어요.",
+        )
+    if total_minutes is not None and total_minutes < 240:
+        return activity_response(
+            False,
+            "suppress",
+            "SHORT_SLEEP",
+            "최근 수면 기록이 짧아요. 운동으로 수면을 대신하지 말고 휴식을 우선해 주세요.",
+            "최근 수면시간을 참고해 휴식을 우선하고 있어요.",
+        )
+
+    light_session = (
+        sleep_unknown
+        or (total_minutes is not None and total_minutes < 360)
+        or (fatigue is not None and fatigue >= 6)
+        or (satisfaction is not None and satisfaction <= 3)
+    )
+    weather = data.get("weather") if isinstance(data.get("weather"), dict) else None
+    nearby = data.get("nearby") if isinstance(data.get("nearby"), dict) else None
+    weather_unknown = (
+        not weather
+        or not isinstance(weather.get("current"), dict)
+        or weather.get("stale")
+    )
+    if weather and not weather_unknown:
+        try:
+            fetched = datetime.strptime(
+                weather.get("updated_at", ""), "%Y-%m-%d %H:%M"
+            ).replace(tzinfo=ZoneInfo("Asia/Seoul"))
+            observed = datetime.strptime(
+                weather["current"].get("observed_at", ""), "%Y-%m-%d %H:%M"
+            ).replace(tzinfo=ZoneInfo("Asia/Seoul"))
+            weather_unknown = now - fetched > timedelta(
+                minutes=10
+            ) or now - observed > timedelta(minutes=120)
+        except (TypeError, ValueError):
+            weather_unknown = True
+    air = weather.get("air_quality", {}) if weather else {}
+    air_unknown = not air.get("ok") or air.get("stale", False)
+    if air.get("ok"):
+        try:
+            air_time = datetime.strptime(
+                air.get("data_time", ""), "%Y-%m-%d %H:%M"
+            ).replace(tzinfo=ZoneInfo("Asia/Seoul"))
+            air_unknown = now - air_time > timedelta(minutes=180)
+        except (TypeError, ValueError):
+            air_unknown = True
+    air_grades = [air.get("pm10", {}).get("grade"), air.get("pm25", {}).get("grade")]
+    air_bad = any(grade in {"나쁨", "매우 나쁨"} for grade in air_grades)
+    current_condition = (
+        str(weather.get("current", {}).get("condition", "")) if weather else ""
+    )
+    forecast = weather.get("forecast", []) if weather else []
+    forecast_conditions = [
+        str(item.get("condition", ""))
+        for item in forecast[:2]
+        if isinstance(item, dict)
+    ]
+    rain_or_snow = any(
+        any(word in condition for word in ("비", "눈", "소나기", "빗방울"))
+        for condition in [current_condition, *forecast_conditions]
+    ) or any(
+        (numeric(item.get("rain_probability")) or 0) >= 50
+        for item in forecast[:2]
+        if isinstance(item, dict)
+    )
+
+    reason = None
+    if weather_unknown or air_unknown or not forecast:
+        reason = "ENVIRONMENT_DATA_UNKNOWN"
+        summary = "날씨 또는 대기질 자료가 최신이 아니어서 실외 제안은 제외했어요."
+    elif air_bad:
+        reason = "AIR_QUALITY_POOR"
+        summary = "주변 측정소 대기질을 고려해 실내 활동을 준비했어요."
+    elif rain_or_snow:
+        reason = "RAIN_OR_SNOW"
+        summary = "현재 또는 가까운 시간의 비·눈 예보를 고려해 실내 활동을 준비했어요."
+    else:
+        summary = "수면·근무와 최신 날씨·대기질을 확인했어요."
+
+    if reason is None and (now.hour < 6 or now.hour >= 18):
+        reason = "PARK_ACCESS_UNKNOWN"
+        summary = (
+            "이 시간대의 공원 개방·조명 정보를 확인하지 못해 실외 제안은 제외했어요."
+        )
+
+    parks = nearby.get("parks", []) if nearby else []
+    park = None
+    if reason is None and isinstance(parks, list):
+        candidates = [
+            item
+            for item in parks
+            if isinstance(item, dict) and numeric(item.get("distance_km")) is not None
+        ]
+        if candidates:
+            park = min(candidates, key=lambda item: numeric(item.get("distance_km")))
+    if reason is None and park is None:
+        reason = "NO_VERIFIED_PARK"
+        summary = "가까운 공원 정보를 확인하지 못해 실내 활동을 준비했어요."
+
+    if light_session:
+        mode = "indoor_activity"
+        reason = reason or "LOW_RECOVERY_SELF_REPORT"
+        duration = 5
+        title = "오늘은 짧고 가볍게"
+        if sleep_unknown:
+            reason = "SLEEP_DATA_UNKNOWN"
+            body = "수면 기록이 없어 컨디션을 추정하지 않았어요. 원한다면 부담이 적은 5분 실내 동작을 볼 수 있어요."
+            summary = "수면 기록이 없어 짧은 실내 루틴만 준비했어요."
+        else:
+            body = "최근 수면시간과 만족도·피로도를 참고해 5분 실내 루틴으로 준비했어요. 운동은 선택 사항입니다."
+            summary = "최근 수면 기록을 참고해 짧은 실내 활동을 준비했어요."
+        steps = [
+            {
+                "id": "gentle-mobility",
+                "title": "부드러운 전신 움직임",
+                "durationMinutes": 5,
+                "description": "불편함이 없는 범위에서 편안하게 움직여요.",
+            }
+        ]
+    elif reason is not None:
+        mode = "indoor_activity"
+        duration = 15
+        title = "오늘은 실내에서 가볍게"
+        body = "실외 조건을 확인할 수 없어 실내 루틴을 준비했어요. 원하지 않으면 언제든 닫을 수 있어요."
+        steps = [
+            {
+                "id": "shoulder-release",
+                "title": "등과 어깨 풀기",
+                "durationMinutes": 5,
+                "description": "통증이 없는 범위에서 천천히 어깨를 움직여요.",
+            },
+            {
+                "id": "mobility",
+                "title": "전신 가동성 움직임",
+                "durationMinutes": 5,
+                "description": "숨이 편안한 속도로 관절을 부드럽게 움직여요.",
+            },
+            {
+                "id": "breathing",
+                "title": "호흡과 마무리",
+                "durationMinutes": 5,
+                "description": "편안한 호흡으로 마무리해요.",
+            },
+        ]
+    else:
+        mode = "outdoor_activity"
+        duration = 15
+        distance = numeric(park.get("distance_km")) or 0
+        walk_one_way = math.ceil(distance * 15)
+        estimated_total = duration + walk_one_way * 2
+        title = "가까운 공원에서 내 페이스대로"
+        body = f"{park.get('name', '가까운 공원')} 주변에서 편안한 속도로 걷기를 고려해 보세요. 운동 여부와 시간은 직접 선택할 수 있어요."
+        summary = f"{current_condition} · 주변 측정소 대기질 {air_grades[0]}/{air_grades[1]} · 공원 정보 확인됨"
+        steps = [
+            {
+                "id": "walk-start",
+                "title": "천천히 걷기",
+                "durationMinutes": 5,
+                "description": "공원에서 편안한 속도로 걸으며 몸을 풀어요.",
+            },
+            {
+                "id": "walk-easy",
+                "title": "가벼운 산책",
+                "durationMinutes": 5,
+                "description": "대화할 수 있는 편안한 속도를 유지해요.",
+            },
+            {
+                "id": "walk-finish",
+                "title": "천천히 마무리 걷기",
+                "durationMinutes": 5,
+                "description": "속도를 낮추고 편하게 마무리해요.",
+            },
+        ]
+        summary += f" · 공원까지 {distance:.1f}km"
+
+    step_total = sum(step["durationMinutes"] for step in steps)
+    return jsonify(
+        {
+            "showModal": True,
+            "decision": mode,
+            "reasonCodes": [reason] if reason else ["WEATHER_AND_AIR_OK"],
+            "conditionSummary": summary,
+            "modal": {
+                "title": title,
+                "body": body,
+                "recommendedTime": f"약 {step_total}분 활동",
+                "activity": {
+                    "contentId": "reviewed-light-routine",
+                    "durationMinutes": step_total,
+                    "steps": steps,
+                },
+                "actions": ["start_session", "dismiss"],
+                "notice": "운동 효과를 보장하거나 수면을 치료하는 처방이 아닙니다. 몸이 불편하면 중단하세요.",
+            },
+        }
+    )
 
 
 if __name__ == "__main__":
