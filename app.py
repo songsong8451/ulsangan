@@ -1200,17 +1200,43 @@ def evaluate_activity_recommendation():
     now = datetime.now(ZoneInfo("Asia/Seoul"))
     today = now.date()
     shift = data.get("shift") if isinstance(data.get("shift"), dict) else {}
-    shift_type = shift.get("routineType", shift.get("todayType", "휴무"))
+    check_in = data.get("checkIn") if isinstance(data.get("checkIn"), dict) else {}
+    shift_aliases = {
+        "day": "주간",
+        "evening": "오후",
+        "night": "야간",
+        "off": "휴무",
+        "주간": "주간",
+        "오후": "오후",
+        "야간": "야간",
+        "비번": "비번",
+        "휴무": "휴무",
+    }
+    shift_type = shift.get(
+        "routineType",
+        shift.get(
+            "todayType",
+            shift_aliases.get(shift.get("type", data.get("shift_pattern")), "휴무"),
+        ),
+    )
     if shift_type not in ACTIVITY_ROUTINES:
         shift_type = "휴무"
     work_hours = shift.get("workHours", {})
-    if data.get("discomfort") is True:
+    if data.get("discomfort") is True or check_in.get("discomfort") is True:
         return activity_response(
             False,
             "rest",
             "USER_REPORTED_DISCOMFORT",
             "몸이 불편하다고 하셔서 오늘은 운동 루틴을 열지 않을게요. 편하게 쉬고, 통증이 계속되면 의료진과 상의해 주세요.",
             "몸의 불편함을 우선해 운동 제안을 쉬고 있어요.",
+        )
+    if check_in.get("intent") == "rest":
+        return activity_response(
+            False,
+            "rest",
+            "USER_CHOSE_REST",
+            "쉬고 싶다고 선택하셔서 운동 제안은 쉬어 갈게요.",
+            "사용자의 휴식 선택을 우선했어요.",
         )
     for offset, key in ((-1, "yesterdayType"), (0, "todayType")):
         shift_day = today + timedelta(days=offset)
@@ -1266,7 +1292,13 @@ def evaluate_activity_recommendation():
             "예정된 수면 시간은 방해하지 않을게요. 충분히 쉬어 주세요.",
             "수면 보호 시간을 적용했어요.",
         )
-    kss = numeric(sleep_data.get("kss"))
+    kss = numeric(sleep_data.get("kss", data.get("kss")))
+    if kss is None:
+        kss = {
+            "not_sleepy": 2,
+            "slightly_sleepy": 5,
+            "very_sleepy": 8,
+        }.get(check_in.get("sleepiness"))
     if kss is not None and 7 <= kss <= 9:
         return activity_response(
             False,
@@ -1275,7 +1307,9 @@ def evaluate_activity_recommendation():
             "졸림 정도가 높게 기록되어 있어요. 지금은 운동보다 안전과 휴식을 우선해 주세요.",
             "졸림 척도(KSS) 응답을 참고해 휴식을 우선하고 있어요.",
         )
-    condition_score = numeric(data.get("conditionScore"))
+    condition_score = numeric(
+        data.get("conditionScore", data.get("energy_score", data.get("energyScore")))
+    )
     if condition_score is not None and not 0 <= condition_score <= 100:
         condition_score = None
     if condition_score is not None and condition_score < 35:
@@ -1286,7 +1320,12 @@ def evaluate_activity_recommendation():
             "컨디션 점수가 매우 낮아 오늘은 운동보다 휴식을 우선해 주세요.",
             "매우 낮은 컨디션 점수를 참고해 휴식을 우선하고 있어요.",
         )
-    planned_sleep = parse_activity_datetime(sleep_data.get("plannedSleepStart"))
+    next_sleep = (
+        data.get("nextSleep") if isinstance(data.get("nextSleep"), dict) else {}
+    )
+    planned_sleep = parse_activity_datetime(
+        sleep_data.get("plannedSleepStart", next_sleep.get("startAt"))
+    )
     near_planned_sleep = bool(
         planned_sleep and now < planned_sleep <= now + timedelta(minutes=60)
     )
@@ -1347,7 +1386,9 @@ def evaluate_activity_recommendation():
         condition_limit = 10
     else:
         condition_limit = None
-    low_condition = data.get("comfortLevel") == "low"
+    low_condition = (
+        data.get("comfortLevel") == "low" or check_in.get("restedness") == "tired"
+    )
     light_session = (
         sleep_unknown
         or (total_minutes is not None and total_minutes < 360)

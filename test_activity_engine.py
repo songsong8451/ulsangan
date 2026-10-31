@@ -92,6 +92,68 @@ class ActivityRecommendationTests(unittest.TestCase):
         self.assertFalse(result["showModal"])
         self.assertEqual(result["reasonCodes"], ["VERY_LOW_CONDITION_SCORE"])
 
+    def test_shift_dummy_discomfort_field_prevents_exercise_modal(self):
+        result = self.evaluate(
+            shift={"type": "night", "availableMinutes": 15},
+            checkIn={"discomfort": True, "intent": "move"},
+            evaluationResult={"showModal": True, "decision": "outdoor_activity"},
+            sleep={"records": [self.good_sleep_record()]},
+        )
+        self.assertFalse(result["showModal"])
+        self.assertEqual(result["reasonCodes"], ["USER_REPORTED_DISCOMFORT"])
+
+    def test_shift_dummy_very_sleepy_field_maps_to_kss_rest_gate(self):
+        result = self.evaluate(
+            shift={"type": "night", "availableMinutes": 15},
+            checkIn={
+                "discomfort": False,
+                "intent": "move",
+                "sleepiness": "very_sleepy",
+            },
+            sleep={"records": [self.good_sleep_record()]},
+        )
+        self.assertFalse(result["showModal"])
+        self.assertEqual(result["reasonCodes"], ["HIGH_SLEEPINESS"])
+
+    def test_shift_dummy_rest_intent_is_respected(self):
+        result = self.evaluate(
+            checkIn={"discomfort": False, "intent": "rest", "sleepiness": "not_sleepy"},
+            sleep={"records": [self.good_sleep_record()]},
+        )
+        self.assertFalse(result["showModal"])
+        self.assertEqual(result["reasonCodes"], ["USER_CHOSE_REST"])
+
+    def test_english_shift_alias_selects_matching_routine(self):
+        result = self.evaluate(
+            shift={"type": "night", "availableMinutes": 15},
+            sleep={"records": [self.good_sleep_record()]},
+        )
+        self.assertTrue(result["showModal"])
+        self.assertEqual(result["modal"]["activity"]["shiftType"], "야간")
+
+    def test_tired_restfulness_selects_short_relaxation_routine(self):
+        result = self.evaluate(
+            checkIn={"discomfort": False, "intent": "move", "restedness": "tired"},
+            sleep={"records": [self.good_sleep_record()]},
+        )
+        self.assertEqual(self.step_minutes(result), 8)
+
+    def test_csv_energy_score_alias_limits_activity(self):
+        result = self.evaluate(
+            energy_score=45,
+            sleep={"records": [self.good_sleep_record()]},
+        )
+        self.assertEqual(self.step_minutes(result), 5)
+
+    def test_shift_dummy_next_sleep_start_limits_activity(self):
+        next_sleep = (datetime.now(KST) + timedelta(minutes=30)).isoformat()
+        result = self.evaluate(
+            shift={"type": "night", "availableMinutes": 15},
+            nextSleep={"startAt": next_sleep},
+            sleep={"records": [self.good_sleep_record()]},
+        )
+        self.assertEqual(self.step_minutes(result), 5)
+
     def test_planned_bedtime_within_an_hour_limits_session(self):
         planned_bedtime = (datetime.now(KST) + timedelta(minutes=30)).isoformat()
         result = self.evaluate(
