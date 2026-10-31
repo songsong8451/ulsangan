@@ -13,9 +13,12 @@ from threading import Lock
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
+from cachetools import TTLCache
 import requests
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, request, send_from_directory
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 load_dotenv()
 
@@ -29,8 +32,28 @@ AIR_KOREA_URL = "https://apis.data.go.kr/B552584/ArpltnInforInqireSvc"
 PAGE_SIZE = 100
 MAX_PAGES = {"parks": 20, "eshare": 5}
 WEATHER_CACHE_TTL_SECONDS = 300
-WEATHER_CACHE = {}
+WEATHER_STALE_TTL_SECONDS = 1800
+WEATHER_CACHE = TTLCache(maxsize=100, ttl=WEATHER_CACHE_TTL_SECONDS)
+WEATHER_LAST_GOOD = TTLCache(maxsize=100, ttl=WEATHER_STALE_TTL_SECONDS)
 WEATHER_CACHE_LOCK = Lock()
+
+
+def create_retry_session():
+    retries = Retry(
+        total=2,
+        connect=2,
+        read=1,
+        status=2,
+        backoff_factor=0.5,
+        status_forcelist=[500, 502, 503, 504],
+        allowed_methods=frozenset({"GET"}),
+    )
+    session = requests.Session()
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
 
 NAME_KEYS = {
     "name",
@@ -104,6 +127,8 @@ def normalized_key(value):
 def get_weather_cache(cache_key, max_age=None):
     with WEATHER_CACHE_LOCK:
         cached = WEATHER_CACHE.get(cache_key)
+        if cached is None and max_age is None:
+            cached = WEATHER_LAST_GOOD.get(cache_key)
         if not cached:
             return None
         age = time.monotonic() - cached["saved_at"]
@@ -114,10 +139,9 @@ def get_weather_cache(cache_key, max_age=None):
 
 def set_weather_cache(cache_key, payload):
     with WEATHER_CACHE_LOCK:
-        WEATHER_CACHE[cache_key] = {
-            "saved_at": time.monotonic(),
-            "payload": deepcopy(payload),
-        }
+        entry = {"saved_at": time.monotonic(), "payload": deepcopy(payload)}
+        WEATHER_CACHE[cache_key] = entry
+        WEATHER_LAST_GOOD[cache_key] = deepcopy(entry)
 
 
 def xml_to_value(element):
@@ -267,7 +291,9 @@ def load_provider_records(provider, response_format, province):
         if provider == "eshare":
             params.pop("type", None)
         try:
-            response = requests.get(url, params=params, headers=headers, timeout=4)
+            response = create_retry_session().get(
+                url, params=params, headers=headers, timeout=3
+            )
             response.raise_for_status()
             payload = parse_payload(response, response_format)
         except (requests.RequestException, ET.ParseError, ValueError) as error:
@@ -336,7 +362,7 @@ def distance_km(lat1, lon1, lat2, lon2):
 
 def geocode_address(address):
     try:
-        response = requests.get(
+        response = create_retry_session().get(
             f"{NOMINATIM_URL}/search",
             params={
                 "q": address,
@@ -346,7 +372,7 @@ def geocode_address(address):
                 "countrycodes": "kr",
             },
             headers={"User-Agent": "ShiftFitNearby/1.0 (public exercise finder)"},
-            timeout=4,
+            timeout=3,
         )
         response.raise_for_status()
         results = response.json()
@@ -367,7 +393,7 @@ def geocode_address(address):
 
 def reverse_geocode(lat, lon):
     try:
-        response = requests.get(
+        response = create_retry_session().get(
             f"{NOMINATIM_URL}/reverse",
             params={
                 "lat": lat,
@@ -377,7 +403,7 @@ def reverse_geocode(lat, lon):
                 "addressdetails": 1,
             },
             headers={"User-Agent": "ShiftFitNearby/1.0 (public exercise finder)"},
-            timeout=4,
+            timeout=3,
         )
         response.raise_for_status()
         result = response.json()
@@ -434,11 +460,11 @@ def kma_items(operation, params):
         "pageNo": 1,
     }
     try:
-        response = requests.get(
+        response = create_retry_session().get(
             f"{KMA_URL}/{operation}",
             params=query,
             headers={"Accept": "application/json"},
-            timeout=4,
+            timeout=3,
         )
         response.raise_for_status()
         payload = response.json()
@@ -529,11 +555,11 @@ def air_quality_for_location(location):
         "ver": "1.0",
     }
     try:
-        response = requests.get(
+        response = create_retry_session().get(
             f"{AIR_KOREA_URL}/getCtprvnRltmMesureDnsty",
             params=params,
             headers={"Accept": "application/json"},
-            timeout=4,
+            timeout=3,
         )
         response.raise_for_status()
         payload = response.json()
