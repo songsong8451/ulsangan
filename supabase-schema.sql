@@ -60,6 +60,17 @@ create table if not exists public.sleep_records (
   awakenings smallint check (awakenings between 0 and 100),
   in_bed_minutes integer check (in_bed_minutes between 1 and 1440),
   sleep_start time,
+  sleep_start_at timestamptz,
+  sleep_end_at timestamptz,
+  total_minutes integer check (total_minutes between 0 and 1440),
+  naps jsonb not null default '[]'::jsonb,
+  shift_type text check (shift_type in ('day', 'evening', 'night', 'off')),
+  prev_shift_end timestamptz,
+  next_shift_start timestamptz,
+  first_off_after_nights boolean not null default false,
+  efficiency_pct numeric(5, 2) check (efficiency_pct between 0 and 100),
+  score jsonb,
+  feedback jsonb,
   shift_before text check (shift_before in ('주간', '오후', '야간', '비번', '휴무')),
   source text not null default 'self' check (source in ('self', 'wearable')),
   created_at timestamptz not null default now(),
@@ -73,6 +84,17 @@ alter table public.sleep_records add column if not exists waso_min integer check
 alter table public.sleep_records add column if not exists awakenings smallint check (awakenings between 0 and 100);
 alter table public.sleep_records add column if not exists in_bed_minutes integer check (in_bed_minutes between 1 and 1440);
 alter table public.sleep_records add column if not exists sleep_start time;
+alter table public.sleep_records add column if not exists sleep_start_at timestamptz;
+alter table public.sleep_records add column if not exists sleep_end_at timestamptz;
+alter table public.sleep_records add column if not exists total_minutes integer check (total_minutes between 0 and 1440);
+alter table public.sleep_records add column if not exists naps jsonb not null default '[]'::jsonb;
+alter table public.sleep_records add column if not exists shift_type text check (shift_type in ('day', 'evening', 'night', 'off'));
+alter table public.sleep_records add column if not exists prev_shift_end timestamptz;
+alter table public.sleep_records add column if not exists next_shift_start timestamptz;
+alter table public.sleep_records add column if not exists first_off_after_nights boolean not null default false;
+alter table public.sleep_records add column if not exists efficiency_pct numeric(5, 2) check (efficiency_pct between 0 and 100);
+alter table public.sleep_records add column if not exists score jsonb;
+alter table public.sleep_records add column if not exists feedback jsonb;
 alter table public.sleep_records add column if not exists shift_before text check (shift_before in ('주간', '오후', '야간', '비번', '휴무'));
 alter table public.sleep_records add column if not exists source text not null default 'self' check (source in ('self', 'wearable'));
 

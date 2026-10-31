@@ -869,6 +869,13 @@ def sleep_score_script():
     )
 
 
+@app.get("/sfs100.js")
+def sfs100_script():
+    return send_from_directory(
+        app.root_path, "sfs100.js", mimetype="application/javascript"
+    )
+
+
 @app.get("/watch-monitor.js")
 def watch_monitor_script():
     return send_from_directory(
