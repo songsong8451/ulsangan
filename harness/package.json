@@ -1,0 +1,16 @@
+{
+  "name": "shiftfit-harness",
+  "private": true,
+  "description": "ShiftFit 루프 엔지니어링 하네스: 엔진 단위 테스트 + Playwright 화면 점검",
+  "type": "module",
+  "scripts": {
+    "unit": "node run-unit.mjs",
+    "e2e": "playwright test",
+    "e2e:remote": "node run-remote.mjs",
+    "loop": "node run-unit.mjs && playwright test",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}
