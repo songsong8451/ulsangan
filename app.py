@@ -312,6 +312,16 @@ def load_provider_records(provider, response_format, province):
             response.raise_for_status()
             payload = parse_payload(response, response_format)
         except (requests.RequestException, ET.ParseError, ValueError) as error:
+            # URL에 인증키가 들어 있으므로 상태 코드와 응답 앞부분만 남긴다.
+            reply = getattr(error, "response", None)
+            app.logger.warning(
+                "%s page %s failed: %s %s %s",
+                provider,
+                page,
+                type(error).__name__,
+                getattr(reply, "status_code", ""),
+                reply.content[:200].decode("utf-8", "replace") if reply is not None else "",
+            )
             raise RuntimeError("외부 데이터 서비스에 연결하지 못했습니다.") from error
         status = payload.get("header", payload) if isinstance(payload, dict) else {}
         result_code = (
@@ -326,6 +336,13 @@ def load_provider_records(provider, response_format, province):
             "SUCCESS",
             "NORMAL SERVICE.",
         }:
+            app.logger.warning(
+                "%s page %s rejected: %s %s",
+                provider,
+                page,
+                result_code,
+                status.get("resultMsg", ""),
+            )
             raise RuntimeError("외부 데이터 서비스가 요청을 승인하지 않았습니다.")
         return payload
 
