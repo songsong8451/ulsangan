@@ -11,6 +11,7 @@ const python = process.platform === 'win32'
 const suites = [
   ['활동 추천 엔진 (Python)', python, ['-m', 'unittest', 'test_activity_engine']],
   ['수면 엔진 (JS)', process.execPath, ['--test', 'sleep-score.test.js', 'sfs100.test.mjs']],
+  ['이탈방지 엔진 (JS)', process.execPath, ['--test', 'retention/engine.test.js']],
 ];
 
 let failed = 0;
