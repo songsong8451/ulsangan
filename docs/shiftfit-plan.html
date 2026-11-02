@@ -1,0 +1,538 @@
+<title>ShiftFit 설계·기획서</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Noto+Sans+KR:wght@400;500;700;800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* 레이아웃: 왼쪽 고정 목차 + 오른쪽 본문 한 단(65자 폭), 좁으면 목차가 위로 접힘 */
+:root{
+  --bg:#f6f8f4; --surface:#ffffff; --sunk:#edf1ea; --line:#d9e1d5;
+  --fg:#16201b; --muted:#56655c; --accent:#4f8a1f; --accent-soft:#e6f2d6;
+  --night:#3d5a99; --warn:#a86a0c; --stop:#b4472f;
+  --f-display:"Manrope","Noto Sans KR",system-ui,sans-serif;
+  --f-body:"Noto Sans KR",system-ui,-apple-system,"Malgun Gothic",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0b1110; --surface:#111a17; --sunk:#17211d; --line:#27342e;
+  --fg:#f1f5ef; --muted:#a1afa6; --accent:#b8f279; --accent-soft:#1f2e1a;
+  --night:#a5c5ff; --warn:#f4c875; --stop:#f19b8e; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0b1110; --surface:#111a17; --sunk:#17211d; --line:#27342e;
+  --fg:#f1f5ef; --muted:#a1afa6; --accent:#b8f279; --accent-soft:#1f2e1a;
+  --night:#a5c5ff; --warn:#f4c875; --stop:#f19b8e; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:16px/1.75 var(--f-body);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:220px minmax(0,1fr);gap:48px;padding-block:40px 96px}
+nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 24px);align-self:start;font-size:13.5px}
+nav.toc b{display:block;font:700 11px/1 var(--f-display);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:12px}
+nav.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:2px;counter-reset:t}
+nav.toc a{display:block;padding:5px 10px;border-radius:6px;color:var(--muted);text-decoration:none}
+nav.toc a:hover,nav.toc a:focus-visible{background:var(--sunk);color:var(--fg);outline:none}
+main{min-width:0}
+header.cover{padding-bottom:32px;border-bottom:1px solid var(--line);margin-bottom:8px}
+.eyebrow{font:700 12px/1 var(--f-display);letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+h1{font:800 clamp(30px,5vw,46px)/1.15 var(--f-display);margin:14px 0 12px;text-wrap:balance;letter-spacing:-.01em}
+.lede{font-size:18px;color:var(--muted);max-width:62ch;margin:0}
+.meta{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:20px;font-size:13.5px;color:var(--muted)}
+.meta span b{color:var(--fg);font-weight:600}
+section{padding-top:48px}
+h2{font:800 26px/1.3 var(--f-display);margin:0 0 6px;text-wrap:balance;display:flex;gap:12px;align-items:baseline}
+h2 .n{font:700 14px/1 var(--f-mono);color:var(--accent)}
+h3{font:700 18px/1.4 var(--f-body);margin:28px 0 8px}
+p,li{max-width:68ch}
+.sub{color:var(--muted);margin:0 0 20px}
+a{color:var(--accent)}
+code{font:13.5px var(--f-mono);background:var(--sunk);padding:1px 6px;border-radius:4px}
+.fig{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;margin:16px 0 8px;overflow-x:auto}
+.fig figcaption{font-size:13px;color:var(--muted);margin-top:10px}
+pre.mermaid{margin:0;background:transparent;min-width:520px;text-align:center}
+.tbl{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:520px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:700 12px/1.4 var(--f-display);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:var(--sunk)}
+td.num{font-variant-numeric:tabular-nums;font-family:var(--f-mono);white-space:nowrap}
+.pill{display:inline-block;font:600 12px/1 var(--f-body);padding:5px 9px;border-radius:999px;white-space:nowrap}
+.ok{background:var(--accent-soft);color:var(--accent)}
+.todo{background:var(--sunk);color:var(--warn);border:1px solid var(--line)}
+.risk{background:var(--sunk);color:var(--stop);border:1px solid var(--line)}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px 20px;min-width:0}
+.card h4{margin:0 0 6px;font:700 16px/1.4 var(--f-body)}
+.card p{margin:0;font-size:14.5px;color:var(--muted)}
+.callout{border-left:3px solid var(--warn);background:var(--surface);padding:14px 18px;border-radius:0 8px 8px 0;margin:18px 0;font-size:15px}
+.deck{display:grid;gap:12px;margin:16px 0}
+.deck .card ol{margin:8px 0 0;padding-left:20px;font-size:14.5px}
+.deck .card ol li{margin:3px 0}
+.tag{font:600 11px/1 var(--f-mono);color:var(--muted)}
+@media (max-width:860px){
+  .wrap{grid-template-columns:1fr;gap:16px;padding-block:24px 64px}
+  nav.toc{position:static}
+  nav.toc ol{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .grid2{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#overview">1. 제품 개요</a></li>
+    <li><a href="#users">2. 사용자와 하루</a></li>
+    <li><a href="#arch">3. 시스템 구조</a></li>
+    <li><a href="#data">4. 데이터 설계</a></li>
+    <li><a href="#engine">5. 엔진(알고리즘)</a></li>
+    <li><a href="#history">6. 개발 과정</a></li>
+    <li><a href="#loop">7. 루프 엔지니어링</a></li>
+    <li><a href="#vercel">8. Vercel 이전</a></li>
+    <li><a href="#roadmap">9. 로드맵·리스크</a></li>
+    <li><a href="#brand">10. 브랜드 네이밍</a></li>
+    <li><a href="#ppt">11. PPT 준비</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="cover">
+  <div class="eyebrow">설계·기획서 v0.1 · 2026-11-02</div>
+  <h1>ShiftFit, 교대근무자의 수면과 회복을 근무표에 맞춰 돕는 앱</h1>
+  <p class="lede">근무표·수면 기록·날씨·주변 시설을 한데 모아, 지금 이 사람에게 맞는 다음 행동(쉬기, 실내 스트레칭, 공원 산책)을 하나만 골라 줍니다.</p>
+  <div class="meta">
+    <span>저장소 <b>songsong8451/ulsangan</b></span>
+    <span>현재 배포 <b>jitda.io</b></span>
+    <span>이전 예정 <b>Vercel</b></span>
+    <span>점검 <b>Playwright 16/16 통과</b></span>
+  </div>
+</header>
+
+<section id="overview">
+  <h2><span class="n">01</span>제품 개요</h2>
+  <p class="sub">무엇을, 누구를 위해, 왜 만드는가</p>
+  <div class="grid2">
+    <div class="card"><h4>문제</h4><p>교대근무자는 근무표 때문에 매일 같은 시각에 자지 못합니다. 일반 수면 앱은 "밤 11시 취침"을 기준으로 점수를 매겨, 야간근무 뒤 낮잠을 실패로 셉니다.</p></div>
+    <div class="card"><h4>해결</h4><p>근무 유형(주간·오후·야간·비번·휴무)별로 기준을 따로 잡아 수면을 채점하고, 그날의 근무·수면·날씨를 보고 안전한 활동 하나를 권합니다.</p></div>
+    <div class="card"><h4>대상</h4><p>3교대·2교대 현장 노동자. 운동 영상은 울산광역시 취약노동자 건강증진센터 영상을 씁니다.</p></div>
+    <div class="card"><h4>원칙</h4><p>안전이 먼저입니다. 졸리거나 아프거나 곧 출근이면 운동을 권하지 않습니다. 진단하지 않고, 오래가면 전문가 상담을 안내합니다.</p></div>
+  </div>
+  <h3>화면 다섯 개</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>화면</th><th>하는 일</th><th>연결된 엔진·데이터</th></tr></thead>
+    <tbody>
+      <tr><td>오늘</td><td>근무 상태, 컨디션 점수, 날씨·대기질, 주변 공원·체육시설, 다음 일정</td><td>energyScore · /api/weather · /api/nearby</td></tr>
+      <tr><td>교대 달력</td><td>반복 근무 패턴(2·3교대), 날짜별 수정, 근무 시간 설정</td><td>shift_times · shift_overrides</td></tr>
+      <tr><td>운동 기록</td><td>근무 유형별 3단계 루틴, 영상, 세션 타이머, 심박 연결</td><td>활동 추천 엔진 · watch-monitor</td></tr>
+      <tr><td>수면 케어</td><td>수면 기록 입력, SFS-100 점수·해설·권고, 추이 그래프</td><td>SFS-100 · sleep_records</td></tr>
+      <tr><td>크루 챌린지</td><td>동료 초대, 주간 작은 목표, 응원 보내기. 경쟁 없이 각자 페이스로</td><td>아직 예시 데이터(서버 연동 전)</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="users">
+  <h2><span class="n">02</span>사용자와 하루</h2>
+  <p class="sub">야간근무자의 하루를 따라가며 앱이 언제 무엇을 하는지</p>
+  <figure class="fig">
+<pre class="mermaid">
+journey
+  title 야간근무자의 하루와 ShiftFit
+  section 퇴근 07시
+    야간 근무 마침: 2: 사용자
+    운동 대신 수면 우선 안내: 4: ShiftFit
+  section 주수면 08~14시
+    암막·귀마개로 잠: 3: 사용자
+    수면 기록 입력: 3: 사용자
+  section 오후 15시
+    SFS-100 점수와 권고 2개: 5: ShiftFit
+    컨디션 점수 확인: 4: 사용자
+  section 출근 전 19~22시
+    20~30분 낮잠 권고: 4: ShiftFit
+    야간 대비 이완 루틴 15분: 4: 사용자
+  section 출근 15분 전
+    운동 제안 멈춤: 5: ShiftFit
+</pre>
+    <figcaption>그림 1. 사용자 여정. 점수는 그 순간의 만족도(1~5)입니다.</figcaption>
+  </figure>
+</section>
+
+<section id="arch">
+  <h2><span class="n">03</span>시스템 구조</h2>
+  <p class="sub">화면 한 장, Flask 서버 하나, Supabase, 공공 API</p>
+  <figure class="fig">
+<pre class="mermaid">
+flowchart LR
+  subgraph Client["브라우저 · index.html"]
+    UI["화면 5개<br/>showPage()"]
+    SFS["sfs100.js<br/>수면 점수·해설·컨디션"]
+    BLE["watch-monitor.js<br/>블루투스 심박"]
+  end
+  subgraph Server["Flask · app.py"]
+    W["/api/weather<br/>5분 캐시 + 30분 예비값"]
+    N["/api/nearby<br/>공원·체육시설 거리순"]
+    A["/v1/activity-recommendations<br/>/evaluate"]
+    C["/api/supabase-config<br/>공개키만"]
+  end
+  subgraph Ext["외부 서비스"]
+    KMA["기상청 단기예보"]
+    AIR["에어코리아 대기질"]
+    PARK["공공데이터 도시공원"]
+    ESH["공유누리 체육시설"]
+    OSM["OSM Nominatim 주소↔좌표"]
+    YT["유튜브 운동 영상"]
+  end
+  SB[("Supabase<br/>Postgres + RLS<br/>Kakao 로그인")]
+  UI --> SFS
+  UI --> BLE
+  UI -- fetch --> W & N & A & C
+  UI -- supabase-js --> SB
+  W --> KMA & AIR
+  N --> PARK & ESH & OSM
+  A -. 루틴 영상 링크 .-> YT
+</pre>
+    <figcaption>그림 2. 구성도. 사용자 데이터는 브라우저가 Supabase에 직접 읽고 쓰며, 서버는 공공 API 중계와 활동 판단만 합니다.</figcaption>
+  </figure>
+  <h3>운동 제안이 나오기까지</h3>
+  <figure class="fig">
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor U as 사용자
+  participant P as 화면
+  participant S as Flask
+  participant G as 공공 API
+  participant D as Supabase
+  U->>P: 오늘 화면 열기
+  P->>D: 근무표·수면 기록 읽기
+  P->>P: SFS-100 → energyScore
+  P->>S: /api/weather (좌표)
+  S->>G: 기상청·에어코리아
+  G-->>S: 예보·대기질
+  S-->>P: 날씨 JSON (캐시)
+  P->>S: /api/nearby (반경)
+  S-->>P: 공원 목록(거리순)
+  U->>P: 세션 살펴보기
+  P->>S: evaluate(근무·수면·컨디션·날씨·공원)
+  S-->>P: decision + reasonCodes + 루틴
+  P-->>U: 모달 또는 "오늘은 쉬어요"
+</pre>
+    <figcaption>그림 3. 활동 추천 요청 순서</figcaption>
+  </figure>
+</section>
+
+<section id="data">
+  <h2><span class="n">04</span>데이터 설계</h2>
+  <p class="sub">모든 표는 RLS "본인 것만" 정책. 화면에는 공개키(publishable)만 나갑니다.</p>
+  <figure class="fig">
+<pre class="mermaid">
+erDiagram
+  AUTH_USERS ||--|| USER_PROFILES : "id"
+  AUTH_USERS ||--o{ SHIFT_TIMES : "user_id"
+  AUTH_USERS ||--o{ SHIFT_OVERRIDES : "user_id"
+  AUTH_USERS ||--o{ SLEEP_RECORDS : "user_id"
+  AUTH_USERS ||--o{ INBODY_RECORDS : "user_id"
+  USER_PROFILES {
+    uuid user_id PK
+    text nickname
+    bool nickname_is_custom
+    text shift_pattern_key "four·three·custom"
+    text_arr shift_sequence "2~14일 순환"
+    date cycle_start_date
+  }
+  SHIFT_TIMES {
+    uuid user_id PK
+    text shift_key PK "day·afternoon·night"
+    time start_time
+    time end_time
+  }
+  SHIFT_OVERRIDES {
+    uuid user_id PK
+    date work_date PK
+    text shift_type "주간~휴무"
+  }
+  SLEEP_RECORDS {
+    uuid user_id FK
+    date sleep_date
+    int sleep_minutes
+    jsonb naps
+    smallint satisfaction_score "1~10"
+    smallint wake_fatigue_score "1~10"
+    int waso_min
+    text shift_type "day·evening·night·off"
+    jsonb score "SFS-100 결과"
+    jsonb feedback
+  }
+  INBODY_RECORDS {
+    text id PK
+    uuid user_id FK
+    date measured_on
+    numeric weight_kg
+    numeric skeletal_muscle_kg
+    numeric body_fat_percentage
+  }
+</pre>
+    <figcaption>그림 4. 테이블 관계(주요 열만, supabase-schema.sql 기준). 수면 기록은 이 밖에 잠들기 시간·깬 횟수·누운 시간·근무 전후 시각 등 선택 열이 더 있습니다.</figcaption>
+  </figure>
+  <div class="tbl"><table>
+    <thead><tr><th>환경변수</th><th>용도</th><th>없을 때</th></tr></thead>
+    <tbody>
+      <tr><td><code>DATA_GO_KR_WEATHER_SERVICE_KEY</code></td><td>기상청 단기예보</td><td>503 + 안내 문구</td></tr>
+      <tr><td><code>DATA_GO_KR_AIR_SERVICE_KEY</code></td><td>에어코리아 대기질</td><td>대기질 "알 수 없음" → 실내 권고</td></tr>
+      <tr><td><code>DATA_GO_KR_SERVICE_KEY</code></td><td>도시공원 정보</td><td>공원 없이 체육시설만</td></tr>
+      <tr><td><code>ESHARE_API_KEY</code></td><td>공유누리 공공체육시설</td><td>공원만</td></tr>
+      <tr><td><code>SUPABASE_PUBLISHABLE_KEY</code></td><td>로그인·동기화</td><td>로그인 불가, 화면만 동작</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="engine">
+  <h2><span class="n">05</span>엔진(알고리즘)</h2>
+  <p class="sub">세 엔진이 순서대로 이어집니다: 수면 점수 → 컨디션 → 활동 판단</p>
+  <figure class="fig">
+<pre class="mermaid">
+flowchart LR
+  R["수면 기록<br/>시간·낮잠·만족도·피로·깸"] --> S1["SFS-100<br/>6영역 100점"]
+  H["최근 7일 기록"] --> S1
+  SH["근무표<br/>퇴근·다음 출근"] --> S1
+  S1 --> F["buildFeedback<br/>해설 + 권고 2개 + 안전 안내"]
+  S1 --> E["energyScore<br/>0.6×오늘 + 0.4×3일 − 수면부채"]
+  E --> A["활동 추천 엔진<br/>판단 사슬"]
+  WX["날씨·대기질·공원"] --> A
+  CI["체크인<br/>불편함·졸림(KSS)"] --> A
+  A --> O["쉬기 / 실내 루틴 / 공원 산책<br/>+ 이유 코드"]
+</pre>
+    <figcaption>그림 5. 엔진 파이프라인</figcaption>
+  </figure>
+
+  <h3>① SFS-100 수면 점수 (sfs100.js)</h3>
+  <p>여섯 영역을 더해 100점. 입력이 빠진 영역은 빼고 "얻은 점수 ÷ 가능한 만점"으로 환산하므로, 기록이 적어도 점수가 나오되 <code>partial</code>로 표시됩니다.</p>
+  <figure class="fig">
+<pre class="mermaid">
+pie showData
+  title SFS-100 영역별 만점
+  "수면 시간(낮잠 포함)" : 30
+  "기상 후 회복감" : 20
+  "수면 만족도" : 15
+  "근무 연계 타이밍" : 15
+  "효율·연속성" : 10
+  "규칙성" : 10
+</pre>
+    <figcaption>그림 6. 배점. 교대근무 특유의 "타이밍"과 "근무 유형별 규칙성"이 25점을 차지하는 것이 일반 수면 앱과의 차이입니다.</figcaption>
+  </figure>
+  <div class="tbl"><table>
+    <thead><tr><th>영역</th><th>만점</th><th>채점 규칙</th></tr></thead>
+    <tbody>
+      <tr><td>수면 시간</td><td class="num">30</td><td>4시간 미만 0, 4~7시간 시간당 10점, 7~9시간 만점, 9시간 넘으면 감점. 야간 연속 뒤 첫 휴무는 회복 수면으로 보고 감점 없음</td></tr>
+      <tr><td>회복감</td><td class="num">20</td><td>기상 후 피로도 1~10 역채점</td></tr>
+      <tr><td>만족도</td><td class="num">15</td><td>1~10 직선</td></tr>
+      <tr><td>타이밍</td><td class="num">15</td><td>근무 간 휴식 11시간 이상 8점(9시간 이상 4점). 야간: 퇴근 2시간 안에 잠들면 +4, 출근 전 4시간 안 낮잠 +3. 그 외: 수면의 절반 이상이 밤(22~08시)이면 +7</td></tr>
+      <tr><td>효율·연속성</td><td class="num">10</td><td>중간 깸 20분 이하 10 / 40분 이하 6, 효율 85% 이상 10 / 65% 이상 5, 둘 중 낮은 값</td></tr>
+      <tr><td>규칙성</td><td class="num">10</td><td>같은 근무 유형 날들의 평균 잠든 시각(원형 평균, 자정 넘김 처리)과 60분 이내 10 / 120분 이내 6. 기록 2건 미만이면 7</td></tr>
+    </tbody>
+  </table></div>
+  <p>등급은 85 이상 "충분히 회복", 70 이상 "보통", 50 이상 "회복 부족", 그 아래 "회복 필요". 해설은 잃은 점수가 큰 영역부터 권고를 최대 두 개 고릅니다. 야간근무 뒤 50점 미만이면 졸음운전 경고를 점수보다 먼저 보여 줍니다.</p>
+
+  <h3>② 컨디션 점수 (energyScore)</h3>
+  <p><code>0.6 × 오늘 SFS + 0.4 × 최근 3일 평균 − 벌점</code>. 벌점은 3일 수면부채(7시간 기준)가 2시간을 넘는 만큼 시간당 3점, 최대 15점. "매우 졸림"이면 49점 상한. 결과에 따라 루틴 길이가 15분 → 10~15분 → 5분 → 휴식으로 줄어듭니다.</p>
+
+  <h3>③ 활동 추천 판단 사슬 (app.py)</h3>
+  <figure class="fig">
+<pre class="mermaid">
+flowchart TD
+  S([요청]) --> D1{몸이 불편?}
+  D1 -- 예 --> X1[쉬기<br/>USER_REPORTED_DISCOMFORT]
+  D1 -- 아니오 --> D2{근무 중 / 15분 내 출근?}
+  D2 -- 예 --> X2[쉬기<br/>WORKING_SHIFT · NEXT_SHIFT_SOON]
+  D2 -- 아니오 --> D3{남은 시간 3분 미만<br/>또는 곧 잘 시간?}
+  D3 -- 예 --> X3[쉬기<br/>NOT_ENOUGH_TIME · PLANNED_SLEEP]
+  D3 -- 아니오 --> D4{졸림 KSS≥7 · 컨디션&lt;35<br/>피로≥8 · 수면&lt;4h?}
+  D4 -- 예 --> X4[쉬기<br/>HIGH_SLEEPINESS 등]
+  D4 -- 아니오 --> I{수면·컨디션 점수}
+  I -- "&lt;55" --> L[저강도 루틴]
+  I -- "&lt;75" --> M[가벼운 루틴]
+  I -- "75 이상" --> B[기본 루틴]
+  L & M & B --> E1{날씨·대기질 확인됨<br/>비·눈 없음<br/>야간·늦은 퇴근 3h 아님<br/>확인된 공원 있음?}
+  E1 -- 아니오 --> IN[실내 루틴<br/>이유 코드 표시]
+  E1 -- 예 --> E2{06~18시 안에 끝남<br/>왕복 시간 충분?}
+  E2 -- 아니오 --> IN
+  E2 -- 예 --> OUT[공원 산책<br/>WEATHER_AND_AIR_OK]
+  IN & OUT --> T[남은 시간에 맞춰<br/>단계별 분 자르기]
+</pre>
+    <figcaption>그림 7. 먼저 걸리는 조건에서 멈추는 판단 사슬. 위쪽일수록 안전과 직결됩니다.</figcaption>
+  </figure>
+  <div class="callout"><b>정리할 점.</b> 이전 수면 엔진(<code>sleep-score.js</code>, 4영역×25점)은 화면에서 더 이상 쓰지 않지만, 같은 식이 서버의 <code>activity_sleep_score</code>에 남아 SFS 점수가 저장되지 않은 기록의 대체 계산에 쓰입니다. 두 엔진의 척도가 달라 같은 기록이 화면과 서버에서 다른 점수를 받을 수 있습니다. 서버 대체 계산을 SFS-100으로 맞추는 것을 로드맵에 넣었습니다.</div>
+</section>
+
+<section id="history">
+  <h2><span class="n">06</span>개발 과정</h2>
+  <p class="sub">커밋 46건(10-30 18건, 10-31 27건, 11-02 1건). 짓다(jitda)에서 만들어 GitHub로 올린 뒤 로컬로 가져왔습니다.</p>
+  <figure class="fig">
+<pre class="mermaid">
+gantt
+  title ShiftFit 개발 흐름 (커밋 기준)
+  dateFormat YYYY-MM-DD HH:mm
+  axisFormat %m-%d %H시
+  section 골격
+    다섯 화면·교대 달력·근무 패턴      :a1, 2026-10-30 09:00, 4h
+    인바디 입력·그래프                 :a2, after a1, 2h
+  section 연동
+    Kakao 로그인·Supabase 동기화·RLS   :b1, 2026-10-30 15:00, 4h
+    날씨 6시간 예보·대기질             :b2, 2026-10-30 15:00, 3h
+  section 엔진
+    실내외 판단 모달 엔진              :c1, 2026-10-30 18:00, 2h
+    수면 점수·컨디션 연결              :c2, 2026-10-31 09:00, 4h
+    SFS-100 v2·판단 사슬 개선          :c3, 2026-10-31 13:00, 5h
+  section 안정화
+    API 타임아웃·캐시·재시도           :d1, 2026-10-31 08:00, 3h
+    모바일 간격·320px 확인             :d2, 2026-10-31 13:00, 6h
+    Windows tzdata·로컬 실행           :d3, 2026-11-02 10:00, 2h
+  section 이전 준비
+    하네스·스킬·기획서                 :e1, 2026-11-02 13:00, 3h
+    Vercel 재배포                      :crit, e2, after e1, 3h
+</pre>
+    <figcaption>그림 8. 같은 날 안의 시각은 커밋 순서로 나눈 근사치입니다(날짜는 실제).</figcaption>
+  </figure>
+  <div class="tbl"><table>
+    <thead><tr><th>단계</th><th>대표 커밋</th><th>배운 점</th></tr></thead>
+    <tbody>
+      <tr><td>골격</td><td>다섯 화면 정리, 3교대 자동 갱신 달력</td><td>근무 패턴이 모든 계산의 기준이라 가장 먼저 만듦</td></tr>
+      <tr><td>연동</td><td>Kakao 로그인, Supabase RLS 강화</td><td>공개키만 화면에, 표마다 본인 정책</td></tr>
+      <tr><td>엔진</td><td>컨디션 엔진 교체, 역방향 피로도 점수 보강</td><td>피로도 방향(1=개운)을 잘못 잡으면 점수가 거꾸로 감 → 테스트로 고정</td></tr>
+      <tr><td>안정화</td><td>Flask API 504 대응 캐시·재시도</td><td>공공 API는 느리고 자주 멈춤 → 마지막 정상값 30분 보관</td></tr>
+      <tr><td>이전 준비</td><td>tzdata, 하네스</td><td>Windows는 Asia/Seoul 시간대 파일이 없음</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="loop">
+  <h2><span class="n">07</span>루프 엔지니어링</h2>
+  <p class="sub">고치기 → 자동 확인 → 눈으로 확인 → 커밋을 짧게 반복합니다</p>
+  <figure class="fig">
+<pre class="mermaid">
+flowchart LR
+  A["① 재현<br/>실패하는 테스트<br/>또는 화면"] --> B["② 수정<br/>app.py · index.html<br/>· sfs100.js"]
+  B --> C["③ npm run loop<br/>단위 30+2건<br/>Playwright 16건"]
+  C -- 실패 --> B
+  C -- 통과 --> D["④ 미리보기<br/>데스크톱·375px"]
+  D -- 어긋남 --> B
+  D -- 좋음 --> E["⑤ 커밋·푸시"]
+  E --> F["⑥ 배포본 점검<br/>run-remote.mjs"]
+  F -- 다르면 --> A
+</pre>
+    <figcaption>그림 9. 한 번의 루프</figcaption>
+  </figure>
+  <div class="tbl"><table>
+    <thead><tr><th>하네스 점검</th><th>내용</th><th>오늘 결과</th></tr></thead>
+    <tbody>
+      <tr><td>화면 골격</td><td>제목·첫 화면, 콘솔 오류 없음, 메뉴 5개 전환, 가로 스크롤 없음</td><td><span class="pill ok">통과</span></td></tr>
+      <tr><td>정적 파일</td><td>sfs100.js · watch-monitor.js · 로고</td><td><span class="pill ok">통과</span></td></tr>
+      <tr><td>보안</td><td>supabase-config에 공개키만</td><td><span class="pill ok">통과</span></td></tr>
+      <tr><td>엔진 API</td><td>불편함 → 쉬기, 쉬기 선택 → 쉬기</td><td><span class="pill ok">통과</span></td></tr>
+      <tr><td>내결함성</td><td>키 없어도 500 없이 JSON</td><td><span class="pill ok">통과</span></td></tr>
+    </tbody>
+  </table></div>
+  <p>데스크톱(1280px)과 모바일(Pixel 7) 두 벌로 돌아 총 16건이며, 로컬과 짓다 배포본 모두 통과했습니다.</p>
+</section>
+
+<section id="vercel">
+  <h2><span class="n">08</span>Vercel 이전</h2>
+  <p class="sub">코드는 거의 그대로, 설정과 로그인 주소만 옮깁니다</p>
+  <figure class="fig">
+<pre class="mermaid">
+flowchart LR
+  G["GitHub<br/>songsong8451/ulsangan"] -->|연결| V["Vercel 프로젝트<br/>Python 런타임"]
+  V --> F["app.py → 서버리스 함수<br/>Flask app 자동 인식"]
+  ENV["환경변수 5개"] --> V
+  V --> URL["*.vercel.app<br/>(나중에 자체 도메인)"]
+  URL -->|리디렉트 허용 추가| SB["Supabase Auth<br/>Kakao 로그인"]
+  URL --> H["하네스<br/>run-remote.mjs"]
+</pre>
+    <figcaption>그림 10. 이전 흐름</figcaption>
+  </figure>
+  <div class="tbl"><table>
+    <thead><tr><th>할 일</th><th>상태</th><th>메모</th></tr></thead>
+    <tbody>
+      <tr><td>Playwright·gh 설치, Vercel MCP 등록</td><td><span class="pill ok">완료</span></td><td>gh 로그인·Vercel 인증은 확인 필요</td></tr>
+      <tr><td>Vercel 프로젝트 만들고 저장소 연결</td><td><span class="pill todo">대기</span></td><td>루트에 package.json이 없어 Python으로 인식</td></tr>
+      <tr><td>환경변수 5개 등록</td><td><span class="pill todo">대기</span></td><td>짓다에 넣은 값을 옮김</td></tr>
+      <tr><td>Supabase Auth 리디렉트 URL에 새 도메인 추가</td><td><span class="pill todo">대기</span></td><td>빠지면 카카오 로그인 실패</td></tr>
+      <tr><td>배포본 하네스 16건</td><td><span class="pill todo">대기</span></td><td><code>node run-remote.mjs https://…vercel.app</code></td></tr>
+      <tr><td>캐시 동작 확인</td><td><span class="pill risk">주의</span></td><td>서버리스는 메모리 캐시가 인스턴스마다 따로라 공공 API 호출이 늘 수 있음</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="roadmap">
+  <h2><span class="n">09</span>로드맵·리스크</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>우선</th><th>항목</th><th>이유</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td>Vercel 이전 + 배포본 하네스 통과</td><td>이번 작업의 목표</td></tr>
+      <tr><td class="num">2</td><td>서버 대체 수면 점수를 SFS-100으로 통일</td><td>화면과 서버 점수가 다를 수 있음</td></tr>
+      <tr><td class="num">3</td><td>index.html 나누기(CSS·JS 파일 분리)</td><td>250KB 한 파일, 압축된 한 줄이라 수정·검토가 어려움</td></tr>
+      <tr><td class="num">4</td><td>하네스 확대: 수면 기록 입력 → 점수 표시, 달력 패턴 저장</td><td>핵심 사용자 흐름을 자동 점검</td></tr>
+      <tr><td class="num">5</td><td>날씨 캐시를 외부 저장소(예: Supabase 표)로</td><td>서버리스에서 캐시 유지</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout"><b>리스크.</b> 공공 API 키 만료·호출 제한, 카카오 로그인 리디렉트 누락, 건강 관련 문구가 진단처럼 읽힐 위험. 문구는 "~해 보세요" 수준을 지키고 지속 증상은 전문가 상담으로 안내합니다.</div>
+</section>
+
+<section id="brand">
+  <h2><span class="n">10</span>브랜드 네이밍</h2>
+  <p class="sub">현재 이름은 ShiftFit. PPT용 후보와 평가 기준을 정리했습니다. 상표·도메인 확인은 아직 안 했습니다.</p>
+  <h3>평가 기준</h3>
+  <p>① 교대근무가 이름에서 바로 보이는가 ② 한국어로 부르기 쉬운가 ③ 수면·회복까지 담는가(운동만이 아니라) ④ 울산 공공 사업과 어울리는가 ⑤ 짧고 기억되는가</p>
+  <div class="tbl"><table>
+    <thead><tr><th>후보</th><th>뜻</th><th>강점</th><th>약점</th></tr></thead>
+    <tbody>
+      <tr><td><b>ShiftFit</b> (현행)</td><td>교대(Shift) + 몸 상태(Fit)</td><td>이미 로고·화면에 쓰임, 짧음</td><td>운동 앱처럼 들려 수면·회복이 약하게 보임</td></tr>
+      <tr><td><b>교대쉼</b></td><td>교대 사이의 쉼</td><td>한국어로 바로 이해, 공공 사업 느낌</td><td>영문 표기가 어색</td></tr>
+      <tr><td><b>ShiftRest</b></td><td>교대 + 회복</td><td>앱의 실제 중심(쉬기 우선)과 일치</td><td>활동·운동 기능이 덜 보임</td></tr>
+      <tr><td><b>리듬핏</b></td><td>생체리듬에 맞춘 몸 관리</td><td>근무 유형별 규칙성 엔진과 맞음</td><td>교대근무가 이름에 직접 안 드러남</td></tr>
+      <tr><td><b>야간쉼표</b></td><td>밤샘 뒤의 쉼표</td><td>야간근무자에게 감성적으로 닿음</td><td>주간·오후 근무자를 놓침</td></tr>
+      <tr><td><b>ShiftFit 울산</b></td><td>현행 + 지역</td><td>건강증진센터 영상 등 지역 연계를 살림</td><td>다른 지역 확장 시 바꿔야 함</td></tr>
+    </tbody>
+  </table></div>
+  <p>추천: 앱 이름은 <b>ShiftFit</b>을 유지하고, 부제로 "교대근무자의 수면·회복 코치"를 붙여 약점을 메우는 방법이 비용이 가장 적습니다. 이름을 바꾼다면 엔진의 핵심(쉬기 우선)과 맞는 <b>ShiftRest</b> 또는 <b>교대쉼</b>을 권합니다.</p>
+</section>
+
+<section id="ppt">
+  <h2><span class="n">11</span>PPT 준비</h2>
+  <p class="sub">세 묶음 18장. 각 장에 쓸 그림을 이 문서의 그림 번호로 연결했습니다.</p>
+  <div class="deck">
+    <div class="card">
+      <span class="tag">DECK A · 개발 과정 · 6장</span>
+      <ol>
+        <li>표지: ShiftFit, 교대근무자의 회복 코치</li>
+        <li>문제: 일반 수면 앱이 교대근무자를 실패로 세는 이유 (1장 문제·해결 카드)</li>
+        <li>사흘 만의 개발: 짓다 → GitHub → 로컬 (그림 8 간트)</li>
+        <li>단계별로 배운 점 (6장 표)</li>
+        <li>품질 지키기: 루프 엔지니어링과 하네스 16건 (그림 9, 7장 표)</li>
+        <li>다음: Vercel 이전과 로드맵 (그림 10, 9장 표)</li>
+      </ol>
+    </div>
+    <div class="card">
+      <span class="tag">DECK B · 개발 기획·엔진 · 8장</span>
+      <ol>
+        <li>사용자의 하루 (그림 1 여정)</li>
+        <li>화면 다섯 개와 역할 (1장 표)</li>
+        <li>시스템 구조 (그림 2)</li>
+        <li>데이터와 보안: RLS·공개키 (그림 4, 환경변수 표)</li>
+        <li>엔진 파이프라인 한 장 요약 (그림 5)</li>
+        <li>SFS-100: 왜 타이밍과 규칙성에 25점인가 (그림 6, 배점 표)</li>
+        <li>안전 우선 판단 사슬 (그림 7)</li>
+        <li>요청이 답이 되기까지 (그림 3 순서도)</li>
+      </ol>
+    </div>
+    <div class="card">
+      <span class="tag">DECK C · 브랜드 네이밍 · 4장</span>
+      <ol>
+        <li>이름이 전해야 할 것: 평가 기준 5가지</li>
+        <li>후보 6개 비교 (10장 표)</li>
+        <li>추천안과 부제</li>
+        <li>디자인 언어: 밤 숲 바탕 + 라임 민트 강조, Noto Sans KR · Manrope</li>
+      </ol>
+    </div>
+  </div>
+  <p>PPT를 만들 때 필요한 것: 로고 원본(<code>shiftfit-logo.png</code>), 화면 캡처(저장소의 <code>*.png</code> 10장과 Playwright로 새로 찍을 데스크톱·모바일 화면), 확정된 브랜드 이름.</p>
+</section>
+</main>
+</div>

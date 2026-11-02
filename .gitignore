@@ -2,3 +2,8 @@
 .env
 .venv/
 __pycache__/
+
+# harness
+harness/node_modules/
+harness/.results/
+harness/.report/
