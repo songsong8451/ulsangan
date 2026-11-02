@@ -1,3 +1,4 @@
+import json
 import unittest
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -207,7 +208,7 @@ class ParkAfterWorkTimeTests(unittest.TestCase):
     def at(self, day, hour, minute=0):
         return datetime(2026, 11, day, hour, minute, tzinfo=KST)
 
-    def evaluate_at(self, now, shift=None, parks=None):
+    def evaluate_at(self, now, shift=None, parks=None, facilities=None):
         from unittest.mock import patch
 
         fmt = lambda value: value.strftime("%Y-%m-%d %H:%M")
@@ -245,7 +246,12 @@ class ParkAfterWorkTimeTests(unittest.TestCase):
                     "pm25": {"grade": "좋음"},
                 },
             },
-            "nearby": {"parks": parks or [{"name": "테스트공원", "distance_km": 0.3}]},
+            "nearby": {
+                "parks": [{"name": "테스트공원", "distance_km": 0.3}]
+                if parks is None
+                else parks,
+                "facilities": facilities or [],
+            },
         }
         with patch("app.current_kst", return_value=now):
             return self.client.post(
@@ -359,6 +365,46 @@ class ParkAfterWorkTimeTests(unittest.TestCase):
     def test_nearby_page_uses_an_indoor_nudge_after_park_hours(self):
         recommendations = self.nearby_recommendations_at(self.at(2, 19, 30))
         self.assertEqual(recommendations[0]["title"], "공원은 밝은 시간에 이용해요")
+
+    def test_parks_with_exercise_equipment_are_listed_as_exercise_spaces(self):
+        from unittest.mock import patch
+
+        from app import normalize_record
+
+        plain = normalize_record(
+            {"parkNm": "옥성공원", "lnmadr": "울산 중구", "latitude": "35.541",
+             "longitude": "129.301", "parkSe": "어린이공원", "mvmFclty": ""},
+            "공원 정보",
+        )
+        gym = normalize_record(
+            {"parkNm": "행복공원", "lnmadr": "울산 중구", "latitude": "35.542",
+             "longitude": "129.302", "parkSe": "어린이공원", "mvmFclty": "트위스트 1"},
+            "공원 정보",
+        )
+
+        def provider_records(provider, response_format, province):
+            if provider == "parks":
+                return ([plain, gym], 2)
+            raise RuntimeError("eshare down")
+
+        with (
+            patch("app.current_kst", return_value=self.at(2, 10, 0)),
+            patch("app.reverse_geocode", return_value=("울산", "31")),
+            patch("app.load_provider_records", side_effect=provider_records),
+        ):
+            data = self.client.post(
+                "/api/nearby", json={"lat": 35.54, "lon": 129.3, "radius": 3}
+            ).get_json()
+        self.assertEqual([item["name"] for item in data["parks"]], ["옥성공원"])
+        self.assertEqual([item["name"] for item in data["facilities"]], ["행복공원"])
+        self.assertTrue(data["facilities"][0]["outdoor_park"])
+        self.assertNotIn("distance_km", gym)
+
+        result = self.evaluate_at(
+            self.at(2, 10, 0), parks=[], facilities=data["facilities"]
+        )
+        self.assertEqual(result["decision"], "outdoor_activity")
+        self.assertIn("행복공원", json.dumps(result, ensure_ascii=False))
 
 
 if __name__ == "__main__":

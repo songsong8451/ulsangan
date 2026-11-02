@@ -249,6 +249,9 @@ def normalize_record(record, source):
     }
     if detail:
         result["detail"] = detail
+    exercise = str(value_for(record, {"mvmfclty", "운동시설"})).strip()
+    if exercise and exercise not in {"-", "없음", "0"}:
+        result["exercise"] = exercise
     for key, value in record.items():
         if normalized_key(key) in {
             "insturladdr",
@@ -295,12 +298,17 @@ def load_provider_records(provider, response_format, province):
 
     def fetch_page(page):
         params = {**request_params(response_format, page), **base_params}
-        if provider == "eshare":
-            params.pop("type", None)
         try:
-            response = create_retry_session().get(
-                url, params=params, headers=headers, timeout=3
-            )
+            if provider == "eshare":
+                # 공유누리 Open API는 GET이면 INVALID REQUEST(400) — JSON 본문 POST만 받는다.
+                params.pop("type", None)
+                response = create_retry_session().post(
+                    url, json=params, headers=headers, timeout=3
+                )
+            else:
+                response = create_retry_session().get(
+                    url, params=params, headers=headers, timeout=3
+                )
             response.raise_for_status()
             payload = parse_payload(response, response_format)
         except (requests.RequestException, ET.ParseError, ValueError) as error:
@@ -950,22 +958,32 @@ def nearby():
             provider, result_key = futures[future]
             try:
                 records, total = future.result()
+                matched = 0
                 for item in records:
                     distance = distance_km(lat, lon, item["lat"], item["lon"])
                     if distance <= radius:
-                        item["distance_km"] = round(distance, 2)
-                        nearby_results[result_key].append(item)
-                nearby_results[result_key].sort(key=lambda item: item["distance_km"])
+                        # 캐시된 원본을 바꾸지 않도록 복사한다.
+                        item = {**item, "distance_km": round(distance, 2)}
+                        matched += 1
+                        if provider == "parks" and item.get("exercise"):
+                            # 운동기구가 있는 공원은 '운동 공간'으로 보여 준다.
+                            item["outdoor_park"] = True
+                            item["source"] = "공원 운동시설"
+                            nearby_results["facilities"].append(item)
+                        else:
+                            nearby_results[result_key].append(item)
                 sources[result_key] = {
                     "ok": True,
                     "total": total,
-                    "matched": len(nearby_results[result_key]),
+                    "matched": matched,
                 }
             except Exception:
                 sources[result_key] = {
                     "ok": False,
                     "message": "외부 자료 응답이 지연되거나 오류가 있어요. 잠시 후 다시 시도해 주세요.",
                 }
+    for items in nearby_results.values():
+        items.sort(key=lambda item: item["distance_km"])
 
     if not any(source["ok"] for source in sources.values()):
         payload = {"error": "주변 정보를 불러오지 못했습니다.", "sources": sources}
@@ -976,7 +994,9 @@ def nearby():
         )
 
     recommendations = []
-    if nearby_results["parks"]:
+    if nearby_results["parks"] or any(
+        item.get("outdoor_park") for item in nearby_results["facilities"]
+    ):
         if PARK_EARLIEST_HOUR <= current_kst().hour < PARK_LATEST_HOUR:
             recommendations.append(
                 {
@@ -1551,6 +1571,13 @@ def evaluate_activity_recommendation():
         )
 
     parks = nearby.get("parks", []) if nearby else []
+    if nearby and isinstance(parks, list) and isinstance(nearby.get("facilities"), list):
+        # 운동기구가 있어 '운동 공간'으로 옮긴 공원도 산책 장소 후보다.
+        parks = parks + [
+            item
+            for item in nearby["facilities"]
+            if isinstance(item, dict) and item.get("outdoor_park")
+        ]
     park = None
     if reason is None and isinstance(parks, list):
         candidates = [
