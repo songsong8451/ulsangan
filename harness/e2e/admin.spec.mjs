@@ -22,11 +22,57 @@ test.describe('관리자 대시보드', () => {
     page.on('pageerror', (e) => errors.push(e.message));
     await page.goto('/admin?demo=1');
     await expect(page.locator('#dashboard')).toBeVisible({ timeout: 20000 });
-    await expect(page.locator('#user-rows tr')).toHaveCount(80);
-    await expect(page.locator('#k-r1')).toContainText('%');
+    // 첫 화면(대시보드)은 한눈에 보기만: 상태 카드·성과·추이는 보이고 표는 숨김
+    await expect(page.locator('#page-dashboard')).toBeVisible();
+    await expect(page.locator('#state-cards .state-card')).toHaveCount(4);
+    await expect(page.locator('#o-quiet')).toContainText('%');
+    await expect(page.locator('#trend-chart svg')).toBeVisible();
+    await expect(page.locator('#user-rows')).toBeHidden();
+    await expect(page.locator('#mode-badge')).toHaveText('시뮬레이션');
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow).toBeLessThanOrEqual(1);
     expect(errors).toEqual([]);
+  });
+
+  // 메뉴 하나를 누르면 그 섹션만 보이고, 모바일에선 포인트·정책 비교가 '더보기' 안에 있다
+  async function openSection(page, name) {
+    const direct = page.locator(`.nav-btn[data-page="${name}"]:visible`);
+    if (!(await direct.count())) await page.locator('#more-btn').click();
+    await page.locator(`.nav-btn[data-page="${name}"]:visible`).first().click();
+  }
+
+  test('메뉴마다 해당 섹션만 보이고 주소에 남는다', async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto('/admin?demo=1');
+    await expect(page.locator('#dashboard')).toBeVisible({ timeout: 20000 });
+    const sections = ['signals', 'nudges', 'points', 'users', 'policy', 'dashboard'];
+    for (const name of sections) {
+      await openSection(page, name);
+      await expect(page).toHaveURL(new RegExp(`#${name}$`));
+      await expect(page.locator(`#page-${name}`)).toBeVisible();
+      for (const other of sections.filter((s) => s !== name)) await expect(page.locator(`#page-${other}`)).toBeHidden();
+      await expect(page.locator(`.nav-btn[data-page="${name}"][aria-current="page"]`).first()).toBeAttached();
+      await expect(page.locator('#notice')).toBeVisible();
+      await expect(page.locator('#mode-badge')).toBeVisible();
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(overflow, `${name} 가로 넘침`).toBeLessThanOrEqual(1);
+    }
+    await expect(page.locator('#signal-bars .hbar').first()).toBeAttached();
+    expect(errors).toEqual([]);
+  });
+
+  test('사용자 메뉴에서 80명 표가 보이고, 새로고침해도 그 메뉴가 유지된다', async ({ page }) => {
+    await page.goto('/admin?demo=1');
+    await expect(page.locator('#dashboard')).toBeVisible({ timeout: 20000 });
+    await openSection(page, 'users');
+    await expect(page.locator('#user-rows tr')).toHaveCount(80);
+    await expect(page.locator('#user-rows')).toBeVisible();
+    await page.reload();
+    await expect(page.locator('#page-users')).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('#user-rows tr')).toHaveCount(80);
+    await page.goBack();
+    await expect(page.locator('#page-dashboard')).toBeVisible();
   });
 });
 

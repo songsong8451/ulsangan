@@ -1,7 +1,7 @@
 // 관리자 대시보드용 가상 사용자 집단 시뮬레이션. 실제 엔진(engine.js)을 하루씩 돌려
 // 미결 정책(11장) 값을 바꿨을 때 결과가 어떻게 달라지는지 비교한다. 실제 사용자 데이터는 쓰지 않는다.
 import {
-  createRetention, runRetentionEngine, logActivity, dateKey, addDays, atKst, weekCheckins, currentMultiplier, pointsTotal,
+  createRetention, runRetentionEngine, logActivity, dateKey, addDays, atKst, weekCheckins, currentMultiplier, pointsTotal, nudgeOutcomes,
 } from './engine.js';
 import { DEFAULT_CONFIG } from './constants.js';
 import { DEFAULT_WORK_HOURS } from './demo.js';
@@ -162,6 +162,8 @@ export function summaryFrom(r, ctx, now, cfg = DEFAULT_CONFIG) {
       deferred: count((n) => n.deferredFrom),
       r1: count((n) => n.type === 'R1'),
       r1_quiet: count((n) => n.type === 'R1' && n.cancelledReason === 'quiet_hours'),
+      // 최근 알림 40건의 결과(관리자 '알림 이후' 표용, 건강 정보 없음)
+      log: nudgeOutcomes(r, ctx, now).slice(-40),
     },
     returns: (r.multipliers || []).filter((m) => m.kind === 'return').length,
     return_completes: (r.ledger || []).filter((e) => e.kind === 'return_complete').length,

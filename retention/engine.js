@@ -692,3 +692,31 @@ export function crewPublicView(r, nickname, now, ctx = { activities: [] }, cfg =
 }
 
 export const CHEERS = CHEER_TEMPLATES;
+
+// ── 관리자용: 알림을 보낸 뒤 어떻게 됐는지 ────────────────
+// 알림마다 결과(발송·취소·이월·대기), 응답(탭) 여부, 발송 후 7일 안에 활동했는지를 정리한다.
+export function nudgeOutcomes(r, ctx, now) {
+  const acts = allActivities(r, ctx);
+  return (r.nudges || []).map((n) => {
+    const status = n.cancelledReason ? 'cancelled' : n.sentAt ? (n.deferredFrom ? 'deferred' : 'sent') : 'pending';
+    let cameBackAt = null;
+    if (n.sentAt) {
+      const from = Date.parse(n.sentAt), to = Math.min(now.getTime(), from + 7 * DAY);
+      cameBackAt = acts.find((a) => Date.parse(a.occurredAt) > from && Date.parse(a.occurredAt) <= to)?.occurredAt || null;
+    }
+    return {
+      type: n.type,
+      plannedAt: n.plannedAt,
+      sentAt: n.sentAt || null,
+      status,
+      reason: n.cancelledReason || null,
+      quietReason: n.quietReason || null,
+      deferredFrom: n.deferredFrom || null,
+      responded: !!n.respondedAt,
+      cameBack: !!cameBackAt,
+      hoursToReturn: cameBackAt ? Math.round((Date.parse(cameBackAt) - Date.parse(n.sentAt)) / 3600000) : null,
+      silent: !!n.silent,
+      text: n.text || '',
+    };
+  });
+}

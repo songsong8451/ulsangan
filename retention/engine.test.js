@@ -402,3 +402,21 @@ test('프리셋 3 복귀 완료: active + 200P + 배지', () => {
   assert.equal(world.r.ledger.filter((e) => e.kind === 'return_complete').reduce((s, e) => s + e.amount, 0), 200);
   assert.equal(statusBadge(world.r, demoCtx(world), now).kind, 'complete');
 });
+
+test('nudgeOutcomes: 발송 뒤 7일 안 활동이면 돌아옴, 취소는 사유와 함께', async () => {
+  const { nudgeOutcomes } = await import('./engine.js');
+  const r = base();
+  r.nudges = [
+    { id: 'a', type: 'R1', plannedAt: at(addDays(TODAY, -5), '12:00').toISOString(), sentAt: at(addDays(TODAY, -5), '12:00').toISOString(), respondedAt: at(addDays(TODAY, -5), '13:00').toISOString() },
+    { id: 'b', type: 'R2', plannedAt: at(addDays(TODAY, -3), '12:00').toISOString(), cancelledReason: 'quiet_hours', quietReason: 'sleep' },
+  ];
+  const ctx = ctxOf({ activities: [act('sleep_logged', at(addDays(TODAY, -4), '09:00'))] });
+  const [sent, cancelled] = nudgeOutcomes(r, ctx, NOW);
+  assert.equal(sent.status, 'sent');
+  assert.equal(sent.responded, true);
+  assert.equal(sent.cameBack, true);
+  assert.equal(sent.hoursToReturn, 21);
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(cancelled.reason, 'quiet_hours');
+  assert.equal(cancelled.cameBack, false);
+});
