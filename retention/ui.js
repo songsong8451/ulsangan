@@ -2,7 +2,7 @@
 // 기존 기록은 window.ShiftFitApp(index.html이 노출)으로 읽기만 하고, 새 활동만 shiftfit-retention에 저장한다.
 import {
   runRetentionEngine, logActivity, awardPoints, dateKey, addDays, atKst, statusBadge, weekCheckins,
-  fiveMinPlanVisible, sortInbox, pointsTotal, currentMultiplier, activeMultipliers, returnCheckins, crewPublicView,
+  fiveMinPlanVisible, sortInbox, pointsTotal, currentMultiplier, activeMultipliers, returnCheckins, crewPublicView, nudgeOutcomes,
 } from './engine.js';
 import {
   DEFAULT_CONFIG, LAPSE_REASONS, RESTART_PLANS, CHEER_TEMPLATES, SIGNAL_LABELS, STATE_LABELS,
@@ -391,6 +391,8 @@ export function summaryRow(state, ctx, now, userId) {
       deferred: count((n) => n.deferredFrom),
       r1: count((n) => n.type === 'R1'),
       r1_quiet: count((n) => n.type === 'R1' && n.cancelledReason === 'quiet_hours'),
+      // 최근 알림 40건의 결과(관리자 '알림 이후' 표용, 건강 정보 없음)
+      log: nudgeOutcomes(state, ctx, now).slice(-40),
     },
     returns: (state.multipliers || []).filter((m) => m.kind === 'return').length,
     return_completes: (state.ledger || []).filter((e) => e.kind === 'return_complete').length,
