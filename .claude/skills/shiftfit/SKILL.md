@@ -16,6 +16,7 @@ description: ShiftFit(교대근무 웰니스, 저장소 songsong8451/ulsangan) �
 | `sfs100.js` (ESM) | **화면이 실제로 쓰는 수면 엔진** SFS-100 v2: `scoreSleep`·`buildFeedback`·`energyScore` |
 | `sleep-score.js` | 이전 수면 엔진(NSF 4영역×25점). 화면은 안 쓰고, 같은 식이 `app.py`의 `activity_sleep_score`에 파이썬으로 복제돼 있다 → 둘을 고칠 땐 함께 고친다 |
 | `watch-monitor.js` | Web Bluetooth 심박(0x180D) 연결. 보안 컨텍스트(https)에서만 동작 |
+| `retention/` + `admin.html` | 이탈방지·복귀유도 엔진(명세 v1.1). `constants.js`(POLICY·RISK_SIGNAL_POINTS·WATCH_THRESHOLD는 값만 바꾸면 동작 변경) · `engine.js`(순수 함수, 모든 날짜는 now 인자) · `store.js`(try/catch 저장·getNow) · `demo.js`(날짜 시뮬레이터·프리셋 3개) · `ui.js`(홈 카드·알림함·복귀 화면·크루·설정) · `cohort.js`(관리자 정책 비교용 가상 집단). 앱은 `?demo=1` 또는 내 정보 하단 숨김 메뉴로 시뮬레이터. 기존 저장은 `safeSetItem`이 `shiftfit:data` 이벤트를 내고 `window.ShiftFitApp`으로 읽기만 함. 관리자 `/admin`·`/api/admin/retention`, Supabase 요약 테이블은 `supabase-retention.sql` |
 | `supabase-schema.sql` | `user_profiles`·`shift_times`·`shift_overrides`·`inbody_records`·`sleep_records`, 전부 RLS "본인 것만" |
 
 엔진 세부 규칙은 [references/engines.md](references/engines.md), 디자인 토큰은 [references/design.md](references/design.md).

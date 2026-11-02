@@ -20,6 +20,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+
 load_dotenv()
 
 app = Flask(__name__, static_folder=None)
@@ -39,6 +40,8 @@ WEATHER_CACHE_LOCK = Lock()
 PARK_EARLIEST_HOUR = 6
 PARK_LATEST_HOUR = 18
 POST_WORK_WINDOW = timedelta(hours=3)
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://wixmynzdcibpwfligpfl.supabase.co").strip()
+RETENTION_SCRIPTS = {"constants.js", "engine.js", "store.js", "demo.js", "ui.js", "cohort.js"}
 
 
 def current_kst():
@@ -920,9 +923,118 @@ def supabase_config():
     # This is a publishable key; never expose a service_role key here.
     return jsonify(
         {
-            "url": "https://wixmynzdcibpwfligpfl.supabase.co",
+            "url": SUPABASE_URL,
             "publishableKey": os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip(),
         }
+    )
+
+
+@app.get("/admin")
+def admin_page():
+    return send_from_directory(app.root_path, "admin.html")
+
+
+class AdminAccessError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+def supabase_rest(token, path, params=None, method="GET"):
+    """관리자 본인 토큰으로 PostgREST를 부른다. RLS가 관리자 여부를 다시 확인한다."""
+    key = os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip()
+    if not key:
+        raise AdminAccessError(503, "SUPABASE_PUBLISHABLE_KEY가 설정되지 않았어요.")
+    headers = {"apikey": key, "Authorization": f"Bearer {token}", "Accept": "application/json"}
+    url = f"{SUPABASE_URL}/rest/v1/{path}"
+    if method == "POST":
+        response = requests.post(url, headers=headers, json={}, timeout=10)
+    else:
+        response = requests.get(url, headers=headers, params=params, timeout=15)
+    if response.status_code in (401, 403):
+        raise AdminAccessError(403, "관리자 권한이 없거나 로그인이 만료됐어요.")
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    return response.json()
+
+
+def supabase_rows(token, table, select, filters=None, page_size=1000):
+    rows, offset = [], 0
+    while True:
+        params = {"select": select, "limit": page_size, "offset": offset, **(filters or {})}
+        batch = supabase_rest(token, table, params)
+        if batch is None:
+            return None
+        rows.extend(batch)
+        if len(batch) < page_size:
+            return rows
+        offset += page_size
+
+
+def admin_token():
+    header = request.headers.get("Authorization", "")
+    token = header[7:].strip() if header.lower().startswith("bearer ") else ""
+    if not token:
+        raise AdminAccessError(401, "로그인이 필요해요.")
+    return token
+
+
+def require_admin(token):
+    if supabase_rest(token, "rpc/is_admin", method="POST") is not True:
+        raise AdminAccessError(403, "관리자로 등록된 계정이 아니에요.")
+
+
+@app.get("/api/admin/me")
+def admin_me():
+    try:
+        require_admin(admin_token())
+    except AdminAccessError as error:
+        return jsonify({"admin": False, "message": error.message}), 200
+    except requests.RequestException:
+        return jsonify({"admin": False, "message": "Supabase에 연결하지 못했어요."}), 200
+    return jsonify({"admin": True})
+
+
+@app.get("/api/admin/retention")
+def admin_retention():
+    try:
+        token = admin_token()
+        require_admin(token)
+        accounts = supabase_rest(token, "rpc/admin_user_accounts", method="POST")
+        rows = supabase_rows(
+            token,
+            "user_retention",
+            "user_id,state,risk_score,risk_signals,last_active_at,state_changed_at,dormant_since,"
+            "return_started_at,points_total,week_checkins,multiplier,nudge_stats,returns,return_completes,"
+            "capped_entries,updated_at",
+        )
+    except AdminAccessError as error:
+        return jsonify({"error": error.message}), error.status
+    except requests.RequestException:
+        app.logger.exception("retention summary load failed")
+        return jsonify({"error": "Supabase에서 데이터를 불러오지 못했어요."}), 502
+    if accounts is None or rows is None:
+        return jsonify({"error": "supabase-retention.sql을 먼저 실행해 주세요."}), 503
+    nicknames = {
+        p["user_id"]: p.get("nickname") or ""
+        for p in supabase_rows(token, "user_profiles", "user_id,nickname") or []
+    }
+    created = {a["user_id"]: a.get("created_at") for a in accounts}
+    users = [
+        {**row, "nickname": nicknames.get(row["user_id"]) or "이름 없음", "created_at": created.get(row["user_id"])}
+        for row in rows
+    ]
+    return jsonify({"asOf": current_kst().isoformat(), "accounts": len(accounts), "users": users})
+
+
+@app.get("/retention/<name>")
+def retention_script(name):
+    if name not in RETENTION_SCRIPTS:
+        return jsonify({"error": "not found"}), 404
+    return send_from_directory(
+        os.path.join(app.root_path, "retention"), name, mimetype="application/javascript"
     )
 
 
